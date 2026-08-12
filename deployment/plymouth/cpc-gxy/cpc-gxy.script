@@ -1,0 +1,24 @@
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+logo.image = Image("gxylogo.png");
+logo.width = Window.GetWidth() * 0.90;
+logo.height = logo.image.GetHeight() * logo.width / logo.image.GetWidth();
+
+if (logo.height > Window.GetHeight() * 0.55)
+  {
+    logo.height = Window.GetHeight() * 0.55;
+    logo.width = logo.image.GetWidth() * logo.height / logo.image.GetHeight();
+  }
+
+logo.image = logo.image.Scale(logo.width, logo.height);
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
+logo.sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2);
+logo.sprite.SetZ(100);
+
+fun display_message_callback(text)
+  {
+  }
+
+Plymouth.SetDisplayMessageFunction(display_message_callback);

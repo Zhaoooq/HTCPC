@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=CPC Control
+Comment=Start the CPC control interface
+Exec=/home/pi/Desktop/CPC_1/start-cpc-1.sh
+Path=/home/pi/Desktop/CPC_1
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+Hidden=false

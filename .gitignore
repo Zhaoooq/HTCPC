@@ -1,0 +1,43 @@
+# qmake generated files
+.qmake.stash
+Makefile
+Makefile.*
+moc_*.cpp
+moc_*.o
+moc_*.h
+qrc_*.cpp
+qrc_*.o
+ui_*.h
+
+# Compiler and linker output
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+/CPC_1
+
+# Build directories
+build/
+build-*/
+debug/
+release/
+
+# IDE and local settings
+.vscode/
+.idea/
+*.user
+*.user.*
+
+# Logs and temporary files
+*.log
+*.tmp
+*~
+
+# Local secrets
+.env
+.env.*
+!.env.example

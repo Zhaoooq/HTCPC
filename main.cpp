@@ -1,0 +1,752 @@
+#include <QApplication>
+#include <QDateTime>
+#include <QDoubleSpinBox>
+#include <QFile>
+#include <QFileDialog>
+#include <QLabel>
+#include <QMainWindow>
+#include <QMessageBox>
+#include <QMetaType>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QProcess>
+#include <QSlider>
+#include <QTabWidget>
+#include <QTextBrowser>
+#include <QTextStream>
+#include <QTimer>
+#include <QToolButton>
+#include <QVector>
+#include <QWheelEvent>
+
+#include <cmath>
+#include <limits>
+
+#include <lgpio.h>
+
+#include "LiquidControlSystem.h"
+#include "algorithms/OpcCounter.h"
+#include "control/TemperaturePid.h"
+#include "daq_worker.h"
+#include "hardware/N4IOA01Valve.h"
+#include "hardware/PT100Sensor.h"
+#include "hardware/PinMap.h"
+#include "hardware/PwmOutputs.h"
+#include "qcustomplot.h"
+#include "state/AppRuntimeState.h"
+#include "ui/Formatters.h"
+#include "ui/MainWindowUi.h"
+
+int main(int argc, char *argv[]) {
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication app(argc, argv);
+    qRegisterMetaType<QVector<double>>("QVector<double>");
+
+    int gpio_handle = lgGpiochipOpen(PinMap::GPIO_CHIP);
+
+    // 水浴锅标定：校正后温度 = gain * 当前显示温度 + bias。
+    PT100Sensor cond_sensor("/dev/spidev1.0", -5.0f, 0.94866653f, -2.88653625f);
+    PT100Sensor sat_sensor("/dev/spidev1.1", -8.0f, 0.95384681f, 0.17535515f);
+    PT100Sensor opc_sensor("/dev/spidev1.2", 0.0f, 0.99875547f, -9.19239152f);
+    HardwarePWM peltier_cond(PinMap::HARDWARE_PWM_CHIP, 0, PinMap::PIN_PELTIER_COND, 5);
+    HardwarePWM heater_sat(PinMap::HARDWARE_PWM_CHIP, 1, PinMap::PIN_HEATER_SAT, 5);
+    LgpioPwmOutput vacuum_pump(gpio_handle, PinMap::PIN_VACUUM_PUMP, 200.0f);
+    LgpioPwmOutput opc_heater(gpio_handle, PinMap::PIN_OPC_HEATER_PWM, 5.0f);
+    LgpioDigitalOutput opc_fan(gpio_handle, PinMap::PIN_OPC_FAN);
+    LgpioDigitalOutput case_fan_1(gpio_handle, PinMap::PIN_CASE_FAN_1);
+    N4IOA01Valve proportional_valve("/dev/ttyAMA0", 9600, 0x01);
+
+    HybridCoolingPID cond_pid;
+    PredictiveHeatingPID sat_pid;
+    ActuatorState actuatorState;
+    bool &is_cond_running = actuatorState.condRunning;
+    bool &is_sat_running = actuatorState.satRunning;
+    bool &is_opc_heater_running = actuatorState.opcHeaterRunning;
+    bool &is_pump_running = actuatorState.pumpRunning;
+    bool &is_opc_fan_running = actuatorState.opcFanRunning;
+    bool &is_case_fan_1_running = actuatorState.caseFan1Running;
+    double &pump_current_power = actuatorState.pumpCurrentPower;
+
+    OpcParams opcParams;
+    constexpr double MEASURED_SAMPLE_FLOW_ML_MIN = 300.0;
+    double currentSampleFlowMlMin = MEASURED_SAMPLE_FLOW_ML_MIN;
+
+    QMainWindow window;
+    window.setWindowFlag(Qt::FramelessWindowHint);
+    MainWindowUi ui = buildMainWindow(app, window, opcParams);
+    DaqWorker *daqWorker = new DaqWorker();
+    bool shutdownRequested = false;
+
+    QObject::connect(ui.btnShutdown, &QToolButton::clicked, [&]() {
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            &window,
+            "关闭设备",
+            "确定要关闭树莓派吗？\n程序会先停止采集并安全关闭全部执行器。",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No
+        );
+        if (answer != QMessageBox::Yes) return;
+
+        shutdownRequested = true;
+        ui.btnShutdown->setEnabled(false);
+        ui.lblStatus->setText("状态: 正在安全关闭设备...");
+        daqWorker->stopDaq();
+        app.quit();
+    });
+
+    AcquisitionState acquisitionState;
+    bool &is_acquiring = acquisitionState.acquiring;
+    bool &hasLatestOpcFrame = acquisitionState.hasLatestOpcFrame;
+    bool &hasLatestParticleConcentration = acquisitionState.hasLatestParticleConcentration;
+    bool &latestParticleConcentrationValid = acquisitionState.latestParticleConcentrationValid;
+    bool &particlePlotFollowLatest = acquisitionState.particlePlotFollowLatest;
+    bool &particlePlotAutoY = acquisitionState.particlePlotAutoY;
+    double &latestParticleConcentration = acquisitionState.latestParticleConcentration;
+    double &smoothedParticleConcentration = acquisitionState.smoothedParticleConcentration;
+    double &latestParticleConcentrationTime = acquisitionState.latestParticleConcentrationTime;
+
+    QVector<double> rawTimeBuffer;
+    QVector<double> rawVoltageBuffer;
+    QVector<double> opcDisplayTimeBuffer;
+    QVector<double> opcDisplayVoltageBuffer;
+    constexpr double PARTICLE_CONCENTRATION_SMOOTHING_ALPHA = 0.35;
+    constexpr int MAX_RAW_BUFFER_SAMPLES = 2000000; // 约 10 秒 @ 200 kSPS，避免长时间运行撑爆内存。
+    constexpr int RAW_TRIM_MARGIN_SAMPLES = 200000; // 批量裁剪，避免每帧搬移百万级 QVector。
+    constexpr double OPC_DISPLAY_WINDOW_SECONDS = 0.05;
+    constexpr int OPC_DISPLAY_POINTS_PER_CHUNK = 1000;
+
+    auto updateAcqUi = [&]() {
+        const bool workerRunning = daqWorker->isRunning();
+        const bool isStopping = workerRunning && !is_acquiring;
+        ui.btnAcqStart->setEnabled(!is_acquiring && !workerRunning);
+        ui.btnAcqStop->setEnabled(is_acquiring);
+        ui.btnSaveRaw->setEnabled(!rawTimeBuffer.isEmpty());
+        ui.lblCaptureState->setText(
+            is_acquiring ? "采集: 运行中" : (isStopping ? "采集: 正在停止" : "采集: 已停止"));
+        ui.lblStatus->setText(
+            is_acquiring ? "状态: 正在采集 OPC 原始信号"
+                         : (isStopping ? "状态: 正在停止数据采集..." : "状态: 待机（执行器关闭）"));
+    };
+
+    QObject::connect(daqWorker, &QThread::finished, &window, [&]() {
+        is_acquiring = false;
+        updateAcqUi();
+    });
+
+    QObject::connect(daqWorker, &DaqWorker::dataReady, ui.opcPlot, [&](QVector<double> time, QVector<double> voltage) {
+        if (!is_acquiring || time.isEmpty()) return;
+
+        rawTimeBuffer += time;
+        rawVoltageBuffer += voltage;
+        if (!ui.btnSaveRaw->isEnabled()) ui.btnSaveRaw->setEnabled(true);
+        if (rawTimeBuffer.size() > MAX_RAW_BUFFER_SAMPLES + RAW_TRIM_MARGIN_SAMPLES) {
+            int excess = rawTimeBuffer.size() - MAX_RAW_BUFFER_SAMPLES;
+            rawTimeBuffer.remove(0, excess);
+            rawVoltageBuffer.remove(0, excess);
+        }
+
+        int displayStride = qMax(1, time.size() / OPC_DISPLAY_POINTS_PER_CHUNK);
+        for (int i = 0; i < time.size() && i < voltage.size(); i += displayStride) {
+            opcDisplayTimeBuffer.append(time.at(i));
+            opcDisplayVoltageBuffer.append(voltage.at(i));
+        }
+        double displayCutoff = time.last() - OPC_DISPLAY_WINDOW_SECONDS;
+        int firstDisplayPoint = 0;
+        while (firstDisplayPoint < opcDisplayTimeBuffer.size() &&
+               opcDisplayTimeBuffer.at(firstDisplayPoint) < displayCutoff) {
+            ++firstDisplayPoint;
+        }
+        if (firstDisplayPoint > 0) {
+            opcDisplayTimeBuffer.remove(0, firstDisplayPoint);
+            opcDisplayVoltageBuffer.remove(0, firstDisplayPoint);
+        }
+
+        OpcCountResult opcResult = analyzeOpcPulseSignal(time, voltage, opcParams);
+        hasLatestOpcFrame = true;
+
+        // 后续压差传感器换算出实时流量后，将 currentSampleFlowMlMin 更新为 ml/min。
+        double chunkDurationSeconds = estimateChunkDurationSeconds(time);
+        bool hasValidSampleFlow =
+            std::isfinite(currentSampleFlowMlMin) && currentSampleFlowMlMin > 0.0;
+        if (hasValidSampleFlow && chunkDurationSeconds > 0.0) {
+            double chunkVolumeMl = currentSampleFlowMlMin * chunkDurationSeconds / 60.0;
+            if (chunkVolumeMl > 0.0 && std::isfinite(chunkVolumeMl)) {
+                double chunkParticleConcentration =
+                    static_cast<double>(opcResult.totalCount) / chunkVolumeMl;
+                if (std::isfinite(smoothedParticleConcentration)) {
+                    smoothedParticleConcentration =
+                        PARTICLE_CONCENTRATION_SMOOTHING_ALPHA * chunkParticleConcentration +
+                        (1.0 - PARTICLE_CONCENTRATION_SMOOTHING_ALPHA) * smoothedParticleConcentration;
+                } else {
+                    smoothedParticleConcentration = chunkParticleConcentration;
+                }
+                latestParticleConcentration = smoothedParticleConcentration;
+                latestParticleConcentrationValid = std::isfinite(latestParticleConcentration);
+            } else {
+                latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+                smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+                latestParticleConcentrationValid = false;
+            }
+        } else {
+            latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+            smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+            latestParticleConcentrationValid = false;
+        }
+        latestParticleConcentrationTime = time.last();
+        hasLatestParticleConcentration = true;
+    }, Qt::QueuedConnection);
+
+    QObject::connect(daqWorker, &DaqWorker::errorOccurred, &window, [&](const QString& msg) {
+        is_acquiring = false;
+        updateAcqUi();
+        QMessageBox::critical(&window, "数据采集错误", msg);
+    });
+
+    QObject::connect(ui.btnAcqStart, &QPushButton::clicked, [&]() {
+        if (daqWorker->isRunning()) return;
+        rawTimeBuffer.clear();
+        rawVoltageBuffer.clear();
+        opcDisplayTimeBuffer.clear();
+        opcDisplayVoltageBuffer.clear();
+        hasLatestOpcFrame = false;
+        latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+        smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+        hasLatestParticleConcentration = false;
+        latestParticleConcentrationValid = false;
+        particlePlotFollowLatest = true;
+        particlePlotAutoY = true;
+        ui.opcPlot->graph(0)->data()->clear();
+        ui.particleConcentrationPlot->graph(0)->data()->clear();
+        ui.particleConcentrationPlot->xAxis->setRange(0, 60);
+        ui.particleConcentrationPlot->yAxis->setRange(0, 10);
+        ui.lblParticleConcentration->setText("-- 个/ml");
+        is_acquiring = true;
+        daqWorker->startDaq();
+        updateAcqUi();
+    });
+
+    QObject::connect(ui.btnAcqStop, &QPushButton::clicked, [&]() {
+        if (!is_acquiring && !daqWorker->isRunning()) return;
+        is_acquiring = false;
+        daqWorker->stopDaq();
+        updateAcqUi();
+    });
+
+    QTimer *plotRefreshTimer = new QTimer(&window);
+    QObject::connect(plotRefreshTimer, &QTimer::timeout, [&]() {
+        if (!is_acquiring) return;
+
+        if (hasLatestParticleConcentration) {
+            ui.lblParticleConcentration->setText(
+                latestParticleConcentrationValid
+                    ? formatParticleConcentration(latestParticleConcentration)
+                    : "-- 个/ml"
+            );
+            if (latestParticleConcentrationValid) {
+                ui.particleConcentrationPlot->graph(0)->addData(
+                    latestParticleConcentrationTime,
+                    latestParticleConcentration
+                );
+                if (particlePlotFollowLatest) {
+                    ui.particleConcentrationPlot->xAxis->setRange(
+                        latestParticleConcentrationTime,
+                        60.0,
+                        Qt::AlignRight
+                    );
+                }
+                if (particlePlotAutoY &&
+                    latestParticleConcentration >
+                    ui.particleConcentrationPlot->yAxis->range().upper * 0.85) {
+                    ui.particleConcentrationPlot->yAxis->setRange(
+                        0,
+                        qMax(10.0, latestParticleConcentration * 1.25)
+                    );
+                }
+                ui.particleConcentrationPlot->replot(QCustomPlot::rpQueuedReplot);
+            }
+            hasLatestParticleConcentration = false;
+        }
+
+        if (hasLatestOpcFrame && ui.tabs->currentWidget() == ui.opcTab && !opcDisplayTimeBuffer.isEmpty()) {
+            ui.opcPlot->graph(0)->setData(opcDisplayTimeBuffer, opcDisplayVoltageBuffer);
+            ui.opcPlot->xAxis->setRange(opcDisplayTimeBuffer.last(), OPC_DISPLAY_WINDOW_SECONDS, Qt::AlignRight);
+            ui.opcPlot->replot(QCustomPlot::rpQueuedReplot);
+            hasLatestOpcFrame = false;
+        }
+    });
+    plotRefreshTimer->start(100);
+
+    auto resetParticlePlotView = [&]() {
+        particlePlotFollowLatest = true;
+        particlePlotAutoY = true;
+        ui.particleConcentrationPlot->axisRect()->setRangeZoom(Qt::Vertical);
+        ui.particleConcentrationPlot->axisRect()->setRangeZoomAxes(nullptr, ui.particleConcentrationPlot->yAxis);
+        if (latestParticleConcentrationTime > 0.0) {
+            ui.particleConcentrationPlot->xAxis->setRange(
+                latestParticleConcentrationTime,
+                60.0,
+                Qt::AlignRight
+            );
+        } else {
+            ui.particleConcentrationPlot->xAxis->setRange(0, 60);
+        }
+        ui.particleConcentrationPlot->yAxis->setRange(
+            0,
+            latestParticleConcentrationValid
+                ? qMax(10.0, latestParticleConcentration * 1.25)
+                : 10.0
+        );
+        ui.particleConcentrationPlot->replot(QCustomPlot::rpQueuedReplot);
+    };
+
+    QObject::connect(ui.btnResetParticlePlot, &QPushButton::clicked, resetParticlePlotView);
+
+    QObject::connect(ui.particleConcentrationPlot, &QCustomPlot::mousePress, [&](QMouseEvent *event) {
+        if (event && event->button() == Qt::LeftButton) {
+            particlePlotFollowLatest = false;
+        }
+    });
+    QObject::connect(ui.particleConcentrationPlot, &QCustomPlot::mouseWheel, [&](QWheelEvent *event) {
+        if (event && event->modifiers().testFlag(Qt::ControlModifier)) {
+            ui.particleConcentrationPlot->axisRect()->setRangeZoom(Qt::Horizontal);
+            ui.particleConcentrationPlot->axisRect()->setRangeZoomAxes(ui.particleConcentrationPlot->xAxis, nullptr);
+            particlePlotFollowLatest = false;
+        } else {
+            ui.particleConcentrationPlot->axisRect()->setRangeZoom(Qt::Vertical);
+            ui.particleConcentrationPlot->axisRect()->setRangeZoomAxes(nullptr, ui.particleConcentrationPlot->yAxis);
+            particlePlotAutoY = false;
+        }
+    });
+    QObject::connect(ui.particleConcentrationPlot, &QCustomPlot::mouseDoubleClick, [&](QMouseEvent *) {
+        resetParticlePlotView();
+    });
+
+    QObject::connect(ui.btnSaveRaw, &QPushButton::clicked, [&]() {
+        if (rawTimeBuffer.isEmpty()) {
+            QMessageBox::information(&window, "保存原始数据", "当前没有可保存的原始信号数据。");
+            return;
+        }
+
+        QString defaultName = QString("opc_raw_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+        QString fileName = QFileDialog::getSaveFileName(&window, "保存 OPC 原始信号", defaultName, "CSV 文件 (*.csv)");
+        if (fileName.isEmpty()) return;
+
+        QFile file(fileName);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QMessageBox::warning(&window, "保存失败", "无法打开文件进行写入。");
+            return;
+        }
+
+        QTextStream out(&file);
+        out << "Time(s),Voltage(V)\n";
+        for (int i = 0; i < rawTimeBuffer.size() && i < rawVoltageBuffer.size(); ++i) {
+            out << QString::number(rawTimeBuffer[i], 'f', 6) << ","
+                << QString::number(rawVoltageBuffer[i], 'f', 5) << "\n";
+        }
+        file.close();
+        QMessageBox::information(&window, "保存完成", QString("已保存 %1 个采样点。").arg(rawTimeBuffer.size()));
+    });
+
+    updateAcqUi();
+
+    auto appendLiquidLog = [&](const QString& msg) {
+        QString timeStr = QDateTime::currentDateTime().toString("hh:mm:ss");
+        ui.liquidLog->append(QString("[%1] %2").arg(timeStr, msg));
+    };
+
+    auto setTrafficLightState = [](QLabel *lamp, bool normal) {
+        const QString color = normal ? QStringLiteral("#27AE60") : QStringLiteral("#D64541");
+        const QString borderColor = normal ? QStringLiteral("#1E8449") : QStringLiteral("#A93226");
+        lamp->setStyleSheet(QString("background-color: %1; border: 2px solid %2; border-radius: 10px;")
+                                .arg(color, borderColor));
+        lamp->setAccessibleName(normal ? QStringLiteral("正常") : QStringLiteral("异常"));
+    };
+
+    auto setLiquidUiState = [&](const QString& state) {
+        ui.lblLiquidState->setText(state);
+        setTrafficLightState(ui.lblOverviewLiquidLamp, state == QStringLiteral("正常"));
+    };
+
+    auto liquidUiStateFromMessage = [&](const QString& msg) {
+        if (msg.contains("严重") || msg.contains("警告") ||
+            msg.contains("失败") || msg.contains("错误") ||
+            msg.contains("超时")) {
+            return QString("异常");
+        }
+        if (msg.contains("正常") || msg.contains("满液")) return QString("正常");
+        if (msg.contains("缺液") || msg.contains("补液")) return QString("异常");
+        return QString();
+    };
+
+    auto refreshAuxState = [&]() {
+        ui.lblAuxState->setText(QString("OPC风扇: %1 | 整机风扇1: %2")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_case_fan_1_running ? "开" : "关"));
+        ui.lblOverviewFan->setText(QString("OPC: %1\n整机1: %2")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_case_fan_1_running ? "开" : "关"));
+        ui.lblCompactDeviceState->setText(QString("气泵: %1    OPC风扇: %2    整机风扇1: %3    压差1/2/3: 预留")
+            .arg(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_case_fan_1_running ? "开" : "关"));
+    };
+
+    auto refreshPumpState = [&]() {
+        ui.lblOverviewPump->setText(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关");
+        ui.lblCompactDeviceState->setText(QString("气泵: %1    OPC风扇: %2    整机风扇1: %3    压差1/2/3: 预留")
+            .arg(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_case_fan_1_running ? "开" : "关"));
+    };
+
+    LiquidControlSystem *liquidSystem = nullptr;
+    bool liquidAlertShown = false;
+    if (gpio_handle >= 0) {
+        LiquidControlSystem *candidate = new LiquidControlSystem(gpio_handle,
+                                                                 PinMap::PIN_LEVEL_SENSOR,
+                                                                 PinMap::PIN_INLET_VALVE,
+                                                                 PinMap::PIN_OUTLET_VALVE);
+        if (candidate->isReady()) {
+            liquidSystem = candidate;
+        } else {
+            ui.lblStatus->setText("状态: 液位控制器不可用");
+            setLiquidUiState("异常");
+            appendLiquidLog(candidate->errorString());
+            delete candidate;
+        }
+    } else {
+        ui.lblStatus->setText("状态: GPIO 控制器不可用");
+        setLiquidUiState("异常");
+        appendLiquidLog(QString("无法打开 gpiochip %1，GPIO 执行器控制已禁用。").arg(PinMap::GPIO_CHIP));
+    }
+
+    if (liquidSystem) {
+        QObject::connect(liquidSystem, &LiquidControlSystem::statusMessage, [&](const QString& msg) {
+            const QString state = liquidUiStateFromMessage(msg);
+            if (!state.isEmpty()) setLiquidUiState(state);
+            if (msg.contains("液位正常") || msg.contains("正常满液")) {
+                liquidAlertShown = false;
+            }
+            appendLiquidLog(msg);
+        });
+        QObject::connect(liquidSystem, &LiquidControlSystem::alertMessage, [&](const QString& alert) {
+            setLiquidUiState("异常");
+            appendLiquidLog(alert);
+            if (liquidAlertShown) return;
+            liquidAlertShown = true;
+            QMessageBox::critical(&window, "液位报警", alert);
+        });
+    }
+
+    bool gpioReady = (gpio_handle >= 0);
+    bool opcFanReady = gpioReady && opc_fan.isReady();
+    bool caseFan1Ready = gpioReady && case_fan_1.isReady();
+    bool pumpReady = gpioReady && vacuum_pump.isReady();
+    bool opcHeaterReady = gpioReady && opc_heater.isReady();
+    bool condPwmReady = peltier_cond.isReady();
+    bool satPwmReady = heater_sat.isReady();
+    ui.btnCondStart->setEnabled(condPwmReady);
+    ui.btnCondStop->setEnabled(false);
+    ui.btnSatStart->setEnabled(satPwmReady);
+    ui.btnSatStop->setEnabled(false);
+    ui.btnPumpStart->setEnabled(pumpReady);
+    ui.btnPumpStop->setEnabled(false);
+    ui.sliderPump->setEnabled(pumpReady);
+    ui.btnOpcStart->setEnabled(opcHeaterReady);
+    ui.btnOpcStop->setEnabled(false);
+    ui.btnOpcFanStart->setEnabled(opcFanReady);
+    ui.btnOpcFanStop->setEnabled(false);
+    ui.btnCaseFan1Start->setEnabled(caseFan1Ready);
+    ui.btnCaseFan1Stop->setEnabled(false);
+    ui.btnLiquidStart->setEnabled(false);
+    ui.btnLiquidStop->setEnabled(liquidSystem != nullptr);
+    ui.btnDrain->setEnabled(liquidSystem != nullptr);
+    if (liquidSystem) {
+        setLiquidUiState("异常");
+        liquidSystem->startMonitoring();
+    }
+    if (!condPwmReady) {
+        ui.lblCondPwm->setText("PWM 不可用");
+        ui.lblCondPwm->setToolTip(QString::fromStdString(peltier_cond.errorString()));
+    }
+    if (!satPwmReady) {
+        ui.lblSatPwm->setText("PWM 不可用");
+        ui.lblSatPwm->setToolTip(QString::fromStdString(heater_sat.errorString()));
+    }
+
+    QObject::connect(ui.sliderPump, &QSlider::valueChanged, [&](int val) {
+        pump_current_power = val;
+        ui.lblPumpValue->setText(QString("%1 %").arg(val));
+        if (is_pump_running) vacuum_pump.set_duty_cycle(pump_current_power);
+        refreshPumpState();
+    });
+    QObject::connect(ui.btnPumpStart, &QPushButton::clicked, [&]() {
+        is_pump_running = true;
+        ui.btnPumpStart->setEnabled(false);
+        ui.btnPumpStop->setEnabled(true);
+        vacuum_pump.set_duty_cycle(pump_current_power);
+        refreshPumpState();
+    });
+    QObject::connect(ui.btnPumpStop, &QPushButton::clicked, [&]() {
+        is_pump_running = false;
+        ui.btnPumpStart->setEnabled(pumpReady);
+        ui.btnPumpStop->setEnabled(false);
+        vacuum_pump.set_duty_cycle(0);
+        refreshPumpState();
+    });
+
+    auto setValveStatus = [&](const QString& text, bool error) {
+        ui.lblValveStatus->setText(text);
+        ui.lblValveStatus->setStyleSheet(
+            QString("font-size: 13px; font-weight: bold; color: %1;")
+                .arg(error ? "#C0392B" : "#187A5A"));
+    };
+    auto showValveError = [&](const QString& operation, const QString& error) {
+        const QString message = QString("%1失败: %2").arg(operation, error);
+        setValveStatus(message, true);
+        QMessageBox::warning(&window, "比例阀通信错误", message);
+    };
+    auto showValveCurrent = [&](double currentMilliamp) {
+        const double opening = N4IOA01Valve::currentToOpening(currentMilliamp);
+        ui.lblValveCurrent->setText(QString("对应输出: %1 mA").arg(currentMilliamp, 0, 'f', 2));
+        ui.sbValveOpening->setValue(opening);
+    };
+
+    QObject::connect(ui.sbValveOpening,
+                     QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                     [&](double opening) {
+        ui.lblValveCurrent->setText(
+            QString("对应输出: %1 mA")
+                .arg(N4IOA01Valve::openingToCurrent(opening), 0, 'f', 2));
+    });
+    QObject::connect(ui.btnValveApply, &QPushButton::clicked, [&]() {
+        const double opening = ui.sbValveOpening->value();
+        double currentMilliamp = 0.0;
+        QString error;
+        if (!proportional_valve.setOpeningPercent(opening, &currentMilliamp, &error)) {
+            showValveError("设置开度", error);
+            return;
+        }
+        showValveCurrent(currentMilliamp);
+        setValveStatus(QString("设置成功: 开度 %1 %，模块已确认输出 %2 mA")
+                           .arg(opening, 0, 'f', 1)
+                           .arg(currentMilliamp, 0, 'f', 2),
+                       false);
+    });
+    QObject::connect(ui.btnValveRead, &QPushButton::clicked, [&]() {
+        double currentMilliamp = 0.0;
+        QString error;
+        if (!proportional_valve.readCurrentMilliamp(&currentMilliamp, &error)) {
+            showValveError("读取输出", error);
+            return;
+        }
+        showValveCurrent(currentMilliamp);
+        setValveStatus(QString("读取成功: 当前输出 %1 mA，对应开度 %2 %")
+                           .arg(currentMilliamp, 0, 'f', 2)
+                           .arg(N4IOA01Valve::currentToOpening(currentMilliamp), 0, 'f', 1),
+                       false);
+    });
+    QObject::connect(ui.btnValveClose, &QPushButton::clicked, [&]() {
+        QString error;
+        if (!proportional_valve.safeClose(&error)) {
+            showValveError("安全关闭", error);
+            return;
+        }
+        showValveCurrent(4.0);
+        setValveStatus("安全关闭成功: 模块已确认输出 4.00 mA，阀门开度 0.0 %", false);
+    });
+
+    QObject::connect(ui.btnOpcFanStart, &QPushButton::clicked, [&]() {
+        is_opc_fan_running = opc_fan.set(true);
+        ui.btnOpcFanStart->setEnabled(!is_opc_fan_running && opcFanReady);
+        ui.btnOpcFanStop->setEnabled(is_opc_fan_running);
+        refreshAuxState();
+    });
+    QObject::connect(ui.btnOpcFanStop, &QPushButton::clicked, [&]() {
+        opc_fan.set(false);
+        is_opc_fan_running = false;
+        ui.btnOpcFanStart->setEnabled(opcFanReady);
+        ui.btnOpcFanStop->setEnabled(false);
+        refreshAuxState();
+    });
+    QObject::connect(ui.btnCaseFan1Start, &QPushButton::clicked, [&]() {
+        is_case_fan_1_running = case_fan_1.set(true);
+        ui.btnCaseFan1Start->setEnabled(!is_case_fan_1_running && caseFan1Ready);
+        ui.btnCaseFan1Stop->setEnabled(is_case_fan_1_running);
+        refreshAuxState();
+    });
+    QObject::connect(ui.btnCaseFan1Stop, &QPushButton::clicked, [&]() {
+        case_fan_1.set(false);
+        is_case_fan_1_running = false;
+        ui.btnCaseFan1Start->setEnabled(caseFan1Ready);
+        ui.btnCaseFan1Stop->setEnabled(false);
+        refreshAuxState();
+    });
+    QObject::connect(ui.btnLiquidStart, &QPushButton::clicked, [&]() {
+        if (!liquidSystem) return;
+        setLiquidUiState("异常");
+        liquidSystem->startMonitoring();
+        ui.btnLiquidStart->setEnabled(false);
+        ui.btnLiquidStop->setEnabled(true);
+    });
+    QObject::connect(ui.btnLiquidStop, &QPushButton::clicked, [&]() {
+        if (!liquidSystem) return;
+        liquidSystem->stopMonitoring();
+        ui.btnLiquidStart->setEnabled(true);
+        ui.btnLiquidStop->setEnabled(false);
+    });
+    QObject::connect(ui.btnDrain, &QPushButton::pressed, [&]() {
+        if (liquidSystem) liquidSystem->startManualDrain();
+    });
+    QObject::connect(ui.btnDrain, &QPushButton::released, [&]() {
+        if (liquidSystem) liquidSystem->stopManualDrain();
+    });
+
+    QObject::connect(ui.sbCond, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double val) { cond_pid.target = val; });
+    QObject::connect(ui.sbSat, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double val) { sat_pid.target = val; });
+    QObject::connect(ui.btnCondStart, &QPushButton::clicked, [&]() {
+        if (!peltier_cond.isReady()) return;
+        is_cond_running = true;
+        ui.btnCondStart->setEnabled(false);
+        ui.btnCondStop->setEnabled(true);
+    });
+    QObject::connect(ui.btnCondStop, &QPushButton::clicked, [&]() {
+        is_cond_running = false;
+        ui.btnCondStart->setEnabled(peltier_cond.isReady());
+        ui.btnCondStop->setEnabled(false);
+        peltier_cond.set_duty_cycle(0);
+    });
+    QObject::connect(ui.btnSatStart, &QPushButton::clicked, [&]() {
+        if (!heater_sat.isReady()) return;
+        is_sat_running = true;
+        ui.btnSatStart->setEnabled(false);
+        ui.btnSatStop->setEnabled(true);
+    });
+    QObject::connect(ui.btnSatStop, &QPushButton::clicked, [&]() {
+        is_sat_running = false;
+        ui.btnSatStart->setEnabled(heater_sat.isReady());
+        ui.btnSatStop->setEnabled(false);
+        heater_sat.set_duty_cycle(0);
+    });
+    QObject::connect(ui.btnOpcStart, &QPushButton::clicked, [&]() {
+        is_opc_heater_running = opc_heater.set_duty_cycle(100.0);
+        ui.btnOpcStart->setEnabled(!is_opc_heater_running && opcHeaterReady);
+        ui.btnOpcStop->setEnabled(is_opc_heater_running);
+        ui.lblOpcPwm->setText(QString("GPIO%1 功率: %2 %")
+            .arg(PinMap::PIN_OPC_HEATER_PWM)
+            .arg(is_opc_heater_running ? 100 : 0));
+    });
+    QObject::connect(ui.btnOpcStop, &QPushButton::clicked, [&]() {
+        opc_heater.set_duty_cycle(0.0);
+        is_opc_heater_running = false;
+        ui.btnOpcStart->setEnabled(opcHeaterReady);
+        ui.btnOpcStop->setEnabled(false);
+        ui.lblOpcPwm->setText(QString("GPIO%1 功率: 0 %").arg(PinMap::PIN_OPC_HEATER_PWM));
+    });
+
+    QTimer *timer = new QTimer(&window);
+    QObject::connect(timer, &QTimer::timeout, [&]() {
+        float t_cond = cond_sensor.read_temperature();
+        float t_sat = sat_sensor.read_temperature();
+        float t_opc = opc_sensor.read_temperature();
+        double p_cond = 0.0;
+        double p_sat = 0.0;
+        double p_opc = is_opc_heater_running ? 100.0 : 0.0;
+
+        if (is_cond_running && !std::isnan(t_cond)) {
+            p_cond = cond_pid.compute(t_cond, 0.5);
+            if (!peltier_cond.set_duty_cycle(p_cond)) {
+                is_cond_running = false;
+                p_cond = 0.0;
+                ui.btnCondStart->setEnabled(false);
+                ui.btnCondStop->setEnabled(false);
+                ui.lblCondPwm->setToolTip(QString::fromStdString(peltier_cond.errorString()));
+            }
+        }
+        if (is_sat_running && !std::isnan(t_sat)) {
+            p_sat = sat_pid.compute(t_sat, 0.5);
+            if (!heater_sat.set_duty_cycle(p_sat)) {
+                is_sat_running = false;
+                p_sat = 0.0;
+                ui.btnSatStart->setEnabled(false);
+                ui.btnSatStop->setEnabled(false);
+                ui.lblSatPwm->setToolTip(QString::fromStdString(heater_sat.errorString()));
+            }
+        }
+
+        ui.lblCondTemp->setText(QString("当前: %1 ℃").arg(formatTemp(t_cond)));
+        ui.lblCondPwm->setText(peltier_cond.isReady()
+            ? QString("功率: %1 %").arg(p_cond, 0, 'f', 1)
+            : QString("PWM 不可用"));
+        ui.lblSatTemp->setText(QString("当前: %1 ℃").arg(formatTemp(t_sat)));
+        ui.lblSatPwm->setText(heater_sat.isReady()
+            ? QString("功率: %1 %").arg(p_sat, 0, 'f', 1)
+            : QString("PWM 不可用"));
+        ui.lblOpcTemp->setText(QString("当前: %1 ℃").arg(formatTemp(t_opc)));
+        ui.lblOpcPwm->setText(QString("GPIO%1 功率: %2 %")
+            .arg(PinMap::PIN_OPC_HEATER_PWM)
+            .arg(p_opc, 0, 'f', 0));
+        constexpr double TEMPERATURE_NORMAL_TOLERANCE_C = 1.0;
+        const bool condNormal = std::isfinite(t_cond) &&
+            std::abs(static_cast<double>(t_cond) - ui.sbCond->value()) <= TEMPERATURE_NORMAL_TOLERANCE_C;
+        const bool satNormal = std::isfinite(t_sat) &&
+            std::abs(static_cast<double>(t_sat) - ui.sbSat->value()) <= TEMPERATURE_NORMAL_TOLERANCE_C;
+        const bool opcNormal = std::isfinite(t_opc) &&
+            std::abs(static_cast<double>(t_opc) - ui.sbOpc->value()) <= TEMPERATURE_NORMAL_TOLERANCE_C;
+        setTrafficLightState(ui.lblOverviewCondLamp, condNormal);
+        setTrafficLightState(ui.lblOverviewSatLamp, satNormal);
+        setTrafficLightState(ui.lblOverviewOpcLamp, opcNormal);
+
+        auto setTemperatureToolTip = [&](QLabel *lamp, const QString& segment, float current, double target) {
+            const QString details = QString("%1当前温度：%2 ℃\n目标温度：%3 ℃\n正常判定范围：目标温度 ±%4 ℃")
+                .arg(segment)
+                .arg(formatTemp(current))
+                .arg(target, 0, 'f', 1)
+                .arg(TEMPERATURE_NORMAL_TOLERANCE_C, 0, 'f', 1);
+            lamp->setToolTip(details);
+        };
+        setTemperatureToolTip(ui.lblOverviewCondLamp, "冷凝段", t_cond, ui.sbCond->value());
+        setTemperatureToolTip(ui.lblOverviewSatLamp, "饱和段", t_sat, ui.sbSat->value());
+        setTemperatureToolTip(ui.lblOverviewOpcLamp, "OPC段", t_opc, ui.sbOpc->value());
+    });
+
+    timer->start(500);
+    window.showMaximized();
+
+    int ret = app.exec();
+
+    if (liquidSystem) {
+        liquidSystem->stopMonitoring();
+        delete liquidSystem;
+        liquidSystem = nullptr;
+    }
+    QString valveShutdownError;
+    proportional_valve.safeClose(&valveShutdownError);
+    proportional_valve.close();
+    vacuum_pump.set_duty_cycle(0);
+    opc_fan.set(false);
+    case_fan_1.set(false);
+    peltier_cond.set_duty_cycle(0);
+    heater_sat.set_duty_cycle(0);
+    opc_heater.set_duty_cycle(0);
+    vacuum_pump.release();
+    opc_heater.release();
+    opc_fan.release();
+    case_fan_1.release();
+    daqWorker->stopDaq();
+    if (!daqWorker->wait(6000)) {
+        // D2XX 调用理论上会在读取超时后返回。若驱动异常导致超时仍未结束，
+        // 退出阶段最后中止采集线程，避免整个程序永久卡在关闭流程。
+        daqWorker->terminate();
+        daqWorker->wait(1000);
+    }
+    if (!daqWorker->isRunning()) delete daqWorker;
+    plotRefreshTimer->stop();
+    delete plotRefreshTimer;
+    if (gpio_handle >= 0) lgGpiochipClose(gpio_handle);
+
+    if (shutdownRequested) {
+        QProcess::execute("/usr/bin/systemctl", QStringList() << "poweroff");
+    }
+    return ret;
+}

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=CPC GXY
+Description=CPC startup screen for GXY
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/cpc-gxy
+ScriptFile=/usr/share/plymouth/themes/cpc-gxy/cpc-gxy.script
