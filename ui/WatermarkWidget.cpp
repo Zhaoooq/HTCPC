@@ -41,9 +41,9 @@ protected:
 
         QPainter painter(this);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        painter.setOpacity(0.10);
+        painter.setOpacity(0.05);
 
-        int side = qMin(width(), height()) * 0.82;
+        int side = qMin(width(), height()) * 0.64;
         QPixmap scaled = seal.scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         QPoint pos((width() - scaled.width()) / 2, (height() - scaled.height()) / 2);
         painter.drawPixmap(pos, scaled);

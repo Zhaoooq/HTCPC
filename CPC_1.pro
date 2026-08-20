@@ -16,6 +16,8 @@ INCLUDEPATH += . \
 SOURCES += \
     main.cpp \
     algorithms/OpcCounter.cpp \
+    control/PressureValveController.cpp \
+    hardware/Ads1115PressureSensor.cpp \
     hardware/N4IOA01Valve.cpp \
     hardware/PT100Sensor.cpp \
     hardware/PwmOutputs.cpp \
@@ -29,8 +31,10 @@ SOURCES += \
 
 HEADERS += \
     algorithms/OpcCounter.h \
+    control/PressureValveController.h \
     control/TemperaturePid.h \
     daq_worker.h \
+    hardware/Ads1115PressureSensor.h \
     hardware/N4IOA01Valve.h \
     hardware/PT100Sensor.h \
     hardware/PinMap.h \

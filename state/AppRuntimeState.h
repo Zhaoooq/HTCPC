@@ -9,7 +9,7 @@ struct ActuatorState {
     bool opcHeaterRunning = false;
     bool pumpRunning = false;
     bool opcFanRunning = false;
-    bool caseFan1Running = false;
+    bool bypassValveOpen = false;
     double pumpCurrentPower = 30.0;
 };
 

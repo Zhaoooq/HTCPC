@@ -3,6 +3,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -17,8 +18,60 @@ namespace {
 
 constexpr double kValveMinMilliamp = 4.0;
 constexpr double kValveMaxMilliamp = 20.0;
+constexpr double kModuleMinMilliamp = 0.5;
+constexpr double kModuleMaxMilliamp = 20.0;
+
+struct CurrentCalibrationPoint {
+    double moduleMilliamp;
+    double measuredMilliamp;
+};
+
+// Piecewise-linear calibration measured from the installed N4IOA01 channel.
+// moduleMilliamp is the value actually stored in register 0x0000, while
+// measuredMilliamp is the corresponding multimeter reading.
+const std::array<CurrentCalibrationPoint, 23> kCurrentCalibration = {{
+    { 3.96,  4.010}, { 4.76,  4.810}, { 5.55,  5.610},
+    { 6.35,  6.410}, { 7.14,  7.210}, { 7.94,  8.010},
+    { 8.73,  8.805}, { 9.53,  9.610}, {10.32, 10.405},
+    {11.28, 11.370}, {11.91, 12.000}, {12.71, 12.800},
+    {13.51, 13.605}, {14.30, 14.395}, {15.10, 15.200},
+    {15.89, 15.990}, {16.69, 16.790}, {17.48, 17.575},
+    {18.28, 18.370}, {18.91, 18.995}, {19.39, 19.465},
+    {19.71, 19.780}, {19.87, 19.945}
+}};
+
 constexpr std::uint16_t kCurrentRegister = 0x0000;
 constexpr int kResponseTimeoutMs = 1000;
+
+double targetToModuleCurrent(double targetMilliamp) {
+    std::size_t upper = 1;
+    while (upper + 1 < kCurrentCalibration.size() &&
+           targetMilliamp > kCurrentCalibration[upper].measuredMilliamp) {
+        ++upper;
+    }
+    const CurrentCalibrationPoint& low = kCurrentCalibration[upper - 1];
+    const CurrentCalibrationPoint& high = kCurrentCalibration[upper];
+    const double fraction = (targetMilliamp - low.measuredMilliamp) /
+                            (high.measuredMilliamp - low.measuredMilliamp);
+    const double command = low.moduleMilliamp +
+                           fraction * (high.moduleMilliamp - low.moduleMilliamp);
+    return std::max(kModuleMinMilliamp,
+                    std::min(kModuleMaxMilliamp, command));
+}
+
+double moduleToCalibratedCurrent(double moduleMilliamp) {
+    std::size_t upper = 1;
+    while (upper + 1 < kCurrentCalibration.size() &&
+           moduleMilliamp > kCurrentCalibration[upper].moduleMilliamp) {
+        ++upper;
+    }
+    const CurrentCalibrationPoint& low = kCurrentCalibration[upper - 1];
+    const CurrentCalibrationPoint& high = kCurrentCalibration[upper];
+    const double fraction = (moduleMilliamp - low.moduleMilliamp) /
+                            (high.moduleMilliamp - low.moduleMilliamp);
+    return low.measuredMilliamp +
+           fraction * (high.measuredMilliamp - low.measuredMilliamp);
+}
 
 speed_t baudToTermios(int baudRate) {
     switch (baudRate) {
@@ -68,7 +121,9 @@ bool N4IOA01Valve::setCurrentMilliamp(double currentMilliamp, QString *error) {
     }
     const double limited = std::max(kValveMinMilliamp,
                                     std::min(kValveMaxMilliamp, currentMilliamp));
-    const std::uint16_t raw = static_cast<std::uint16_t>(std::lround(limited * 100.0));
+    const double moduleCurrent = targetToModuleCurrent(limited);
+    const std::uint16_t raw =
+        static_cast<std::uint16_t>(std::lround(moduleCurrent * 100.0));
     return writeRegister(kCurrentRegister, raw, error);
 }
 
@@ -80,7 +135,8 @@ bool N4IOA01Valve::readCurrentMilliamp(double *currentMilliamp, QString *error) 
 
     std::uint16_t raw = 0;
     if (!readRegister(kCurrentRegister, &raw, error)) return false;
-    *currentMilliamp = static_cast<double>(raw) * 0.01;
+    const double moduleCurrent = static_cast<double>(raw) * 0.01;
+    *currentMilliamp = moduleToCalibratedCurrent(moduleCurrent);
     return true;
 }
 

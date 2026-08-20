@@ -2,6 +2,7 @@
 #define CPC_UI_MAINWINDOWUI_H
 
 class QApplication;
+class QComboBox;
 class QCustomPlot;
 class QDoubleSpinBox;
 class QLabel;
@@ -27,7 +28,7 @@ struct MainWindowUi {
     QLabel *lblOverviewSatLamp = nullptr;
     QLabel *lblOverviewOpcLamp = nullptr;
     QLabel *lblOverviewPump = nullptr;
-    QLabel *lblOverviewFan = nullptr;
+    QLabel *lblOverviewAux = nullptr;
     QLabel *lblOverviewLiquidLamp = nullptr;
     QLabel *lblCompactDeviceState = nullptr;
 
@@ -66,10 +67,24 @@ struct MainWindowUi {
     QLabel *lblValveCurrent = nullptr;
     QLabel *lblValveStatus = nullptr;
 
+    QComboBox *cmbPressureControlChannel = nullptr;
+    QDoubleSpinBox *sbPressureTarget = nullptr;
+    QComboBox *cmbPressureControlDirection = nullptr;
+    QDoubleSpinBox *sbPressureKp = nullptr;
+    QDoubleSpinBox *sbPressureKi = nullptr;
+    QPushButton *btnPressureControlStart = nullptr;
+    QPushButton *btnPressureControlStop = nullptr;
+    QLabel *lblPressureControlStatus = nullptr;
+
+    QLabel *lblPressureValue[3] = {nullptr, nullptr, nullptr};
+    QLabel *lblPressureDetails[3] = {nullptr, nullptr, nullptr};
+    QLabel *lblPressureStatus[3] = {nullptr, nullptr, nullptr};
+    QPushButton *btnPressureZero = nullptr;
+
     QPushButton *btnOpcFanStart = nullptr;
     QPushButton *btnOpcFanStop = nullptr;
-    QPushButton *btnCaseFan1Start = nullptr;
-    QPushButton *btnCaseFan1Stop = nullptr;
+    QPushButton *btnBypassHighFlow = nullptr;
+    QPushButton *btnBypassLowFlow = nullptr;
     QLabel *lblAuxState = nullptr;
 
     QPushButton *btnLiquidStart = nullptr;

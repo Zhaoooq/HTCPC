@@ -1,6 +1,8 @@
 #include <QApplication>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QLabel>
@@ -19,6 +21,8 @@
 #include <QVector>
 #include <QWheelEvent>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -26,8 +30,10 @@
 
 #include "LiquidControlSystem.h"
 #include "algorithms/OpcCounter.h"
+#include "control/PressureValveController.h"
 #include "control/TemperaturePid.h"
 #include "daq_worker.h"
+#include "hardware/Ads1115PressureSensor.h"
 #include "hardware/N4IOA01Valve.h"
 #include "hardware/PT100Sensor.h"
 #include "hardware/PinMap.h"
@@ -53,7 +59,7 @@ int main(int argc, char *argv[]) {
     LgpioPwmOutput vacuum_pump(gpio_handle, PinMap::PIN_VACUUM_PUMP, 200.0f);
     LgpioPwmOutput opc_heater(gpio_handle, PinMap::PIN_OPC_HEATER_PWM, 5.0f);
     LgpioDigitalOutput opc_fan(gpio_handle, PinMap::PIN_OPC_FAN);
-    LgpioDigitalOutput case_fan_1(gpio_handle, PinMap::PIN_CASE_FAN_1);
+    LgpioDigitalOutput bypass_valve(gpio_handle, PinMap::PIN_BYPASS_VALVE);
     N4IOA01Valve proportional_valve("/dev/ttyAMA0", 9600, 0x01);
 
     HybridCoolingPID cond_pid;
@@ -64,12 +70,13 @@ int main(int argc, char *argv[]) {
     bool &is_opc_heater_running = actuatorState.opcHeaterRunning;
     bool &is_pump_running = actuatorState.pumpRunning;
     bool &is_opc_fan_running = actuatorState.opcFanRunning;
-    bool &is_case_fan_1_running = actuatorState.caseFan1Running;
+    bool &is_bypass_valve_open = actuatorState.bypassValveOpen;
     double &pump_current_power = actuatorState.pumpCurrentPower;
 
     OpcParams opcParams;
-    constexpr double MEASURED_SAMPLE_FLOW_ML_MIN = 300.0;
-    double currentSampleFlowMlMin = MEASURED_SAMPLE_FLOW_ML_MIN;
+    constexpr double BYPASS_LOW_FLOW_ML_MIN = 300.0;
+    constexpr double BYPASS_HIGH_FLOW_ML_MIN = 1500.0;
+    double currentSampleFlowMlMin = BYPASS_LOW_FLOW_ML_MIN;
 
     QMainWindow window;
     window.setWindowFlag(Qt::FramelessWindowHint);
@@ -164,7 +171,7 @@ int main(int argc, char *argv[]) {
         OpcCountResult opcResult = analyzeOpcPulseSignal(time, voltage, opcParams);
         hasLatestOpcFrame = true;
 
-        // 后续压差传感器换算出实时流量后，将 currentSampleFlowMlMin 更新为 ml/min。
+        // 按操作员手动选择的旁路模式，使用 300/1500 ml/min 计算颗粒浓度。
         double chunkDurationSeconds = estimateChunkDurationSeconds(time);
         bool hasValidSampleFlow =
             std::isfinite(currentSampleFlowMlMin) && currentSampleFlowMlMin > 0.0;
@@ -364,7 +371,11 @@ int main(int argc, char *argv[]) {
 
     auto setLiquidUiState = [&](const QString& state) {
         ui.lblLiquidState->setText(state);
-        setTrafficLightState(ui.lblOverviewLiquidLamp, state == QStringLiteral("正常"));
+        const bool normal = state == QStringLiteral("正常");
+        ui.lblLiquidState->setStyleSheet(normal
+            ? "font-size: 14px; color: #187A5A; font-weight: bold; background: #E8F8F5; border: 1px solid #A3E4D7; border-radius: 12px; padding: 4px 12px;"
+            : "font-size: 14px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
+        setTrafficLightState(ui.lblOverviewLiquidLamp, normal);
     };
 
     auto liquidUiStateFromMessage = [&](const QString& msg) {
@@ -378,25 +389,30 @@ int main(int argc, char *argv[]) {
         return QString();
     };
 
-    auto refreshAuxState = [&]() {
-        ui.lblAuxState->setText(QString("OPC风扇: %1 | 整机风扇1: %2")
-            .arg(is_opc_fan_running ? "开" : "关")
-            .arg(is_case_fan_1_running ? "开" : "关"));
-        ui.lblOverviewFan->setText(QString("OPC: %1\n整机1: %2")
-            .arg(is_opc_fan_running ? "开" : "关")
-            .arg(is_case_fan_1_running ? "开" : "关"));
-        ui.lblCompactDeviceState->setText(QString("气泵: %1    OPC风扇: %2    整机风扇1: %3    压差1/2/3: 预留")
+    std::array<QString, 3> compactPressureStates = {{"初始化", "初始化", "初始化"}};
+    auto refreshCompactDeviceState = [&]() {
+        ui.lblCompactDeviceState->setText(QString("气泵: %1    OPC风扇: %2    旁路: %3    压差 A0:%4  A1:%5  A2:%6")
             .arg(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关")
             .arg(is_opc_fan_running ? "开" : "关")
-            .arg(is_case_fan_1_running ? "开" : "关"));
+            .arg(is_bypass_valve_open ? "1.5 L/min" : "0.3 L/min")
+            .arg(compactPressureStates[0])
+            .arg(compactPressureStates[1])
+            .arg(compactPressureStates[2]));
+    };
+
+    auto refreshAuxState = [&]() {
+        ui.lblAuxState->setText(QString("OPC风扇: %1 | 旁路模式: %2")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_bypass_valve_open ? "大流量 1.5 L/min" : "小流量 0.3 L/min"));
+        ui.lblOverviewAux->setText(QString("OPC风扇: %1\n旁路: %2")
+            .arg(is_opc_fan_running ? "开" : "关")
+            .arg(is_bypass_valve_open ? "1.5 L/min" : "0.3 L/min"));
+        refreshCompactDeviceState();
     };
 
     auto refreshPumpState = [&]() {
         ui.lblOverviewPump->setText(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关");
-        ui.lblCompactDeviceState->setText(QString("气泵: %1    OPC风扇: %2    整机风扇1: %3    压差1/2/3: 预留")
-            .arg(is_pump_running ? QString("%1 %").arg(pump_current_power, 0, 'f', 0) : "关")
-            .arg(is_opc_fan_running ? "开" : "关")
-            .arg(is_case_fan_1_running ? "开" : "关"));
+        refreshCompactDeviceState();
     };
 
     LiquidControlSystem *liquidSystem = nullptr;
@@ -440,7 +456,7 @@ int main(int argc, char *argv[]) {
 
     bool gpioReady = (gpio_handle >= 0);
     bool opcFanReady = gpioReady && opc_fan.isReady();
-    bool caseFan1Ready = gpioReady && case_fan_1.isReady();
+    bool bypassValveReady = gpioReady && bypass_valve.isReady();
     bool pumpReady = gpioReady && vacuum_pump.isReady();
     bool opcHeaterReady = gpioReady && opc_heater.isReady();
     bool condPwmReady = peltier_cond.isReady();
@@ -456,8 +472,8 @@ int main(int argc, char *argv[]) {
     ui.btnOpcStop->setEnabled(false);
     ui.btnOpcFanStart->setEnabled(opcFanReady);
     ui.btnOpcFanStop->setEnabled(false);
-    ui.btnCaseFan1Start->setEnabled(caseFan1Ready);
-    ui.btnCaseFan1Stop->setEnabled(false);
+    ui.btnBypassHighFlow->setEnabled(bypassValveReady);
+    ui.btnBypassLowFlow->setEnabled(false);
     ui.btnLiquidStart->setEnabled(false);
     ui.btnLiquidStop->setEnabled(liquidSystem != nullptr);
     ui.btnDrain->setEnabled(liquidSystem != nullptr);
@@ -472,6 +488,127 @@ int main(int argc, char *argv[]) {
     if (!satPwmReady) {
         ui.lblSatPwm->setText("PWM 不可用");
         ui.lblSatPwm->setToolTip(QString::fromStdString(heater_sat.errorString()));
+    }
+
+    Ads1115PressureSensor *pressureSensor =
+        new Ads1115PressureSensor("/dev/i2c-1", 0x48, &window);
+    std::array<double, 3> latestPressurePa = {{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()
+    }};
+    std::array<qint64, 3> latestPressureTimeMs = {{0, 0, 0}};
+    std::array<QString, 3> latestPressureWarnings;
+    QObject::connect(pressureSensor,
+                     &Ads1115PressureSensor::zeroCalibrationProgress,
+                     &window,
+                     [&](int percent) {
+        for (int channel = 0; channel < 3; ++channel) {
+            ui.lblPressureValue[channel]->setText(QString("校零 %1%").arg(percent));
+            ui.lblPressureStatus[channel]->setText(QString("校零中 %1%").arg(percent));
+            ui.lblPressureStatus[channel]->setToolTip(
+                "零点校准期间请保持气泵关闭，且 H/L 两侧等压。");
+            ui.lblPressureStatus[channel]->setStyleSheet(
+                "font-size: 11px; color: #B95E00; font-weight: bold; background: #FEF5E7; "
+                "border: 1px solid #F5CBA7; border-radius: 10px; padding: 3px 8px;");
+            compactPressureStates[channel] = QString("校零%1%").arg(percent);
+        }
+        ui.btnPressureZero->setEnabled(false);
+        ui.btnPressureControlStart->setEnabled(false);
+        ui.btnPumpStart->setEnabled(false);
+        refreshCompactDeviceState();
+    });
+    QObject::connect(pressureSensor,
+                     &Ads1115PressureSensor::zeroCalibrationFinished,
+                     &window,
+                     [&](int channel, double zeroVoltage, double uncorrectedPressurePa) {
+        if (channel < 0 || channel >= 3) return;
+        ui.lblPressureStatus[channel]->setText("校零完成");
+        ui.lblPressureStatus[channel]->setToolTip(
+            QString("Vzero=%1 V，校正前 %2 Pa")
+                .arg(zeroVoltage, 0, 'f', 6)
+                .arg(uncorrectedPressurePa, 0, 'f', 1));
+        ui.lblPressureStatus[channel]->setStyleSheet(
+            "font-size: 11px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+            "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
+        ui.btnPressureZero->setEnabled(true);
+        ui.btnPressureControlStart->setEnabled(true);
+        ui.btnPumpStart->setEnabled(pumpReady && !is_pump_running);
+    });
+    QObject::connect(pressureSensor,
+                     &Ads1115PressureSensor::pressureUpdated,
+                     &window,
+                     [&](int channel,
+                         double pressurePa,
+                         double adcVoltage,
+                         double sensorVoltage,
+                         double fullScalePercent,
+                         const QString& warning) {
+        if (channel < 0 || channel >= 3) return;
+        latestPressurePa[channel] = pressurePa;
+        latestPressureTimeMs[channel] = QDateTime::currentMSecsSinceEpoch();
+        latestPressureWarnings[channel] = warning;
+        const QString pressureText = channel == 0
+            ? QString("%1 kPa").arg(pressurePa / 1000.0, 0, 'f', 3)
+            : QString("%1 Pa").arg(pressurePa, 0, 'f', 1);
+        ui.lblPressureValue[channel]->setText(pressureText);
+        ui.lblPressureDetails[channel]->setText(
+            QString("%1 V → %2 V · %3 %FS")
+                .arg(adcVoltage, 0, 'f', 4)
+                .arg(sensorVoltage, 0, 'f', 4)
+                .arg(fullScalePercent, 0, 'f', 1));
+        if (warning.isEmpty()) {
+            ui.lblPressureStatus[channel]->setText("正常");
+            ui.lblPressureStatus[channel]->setToolTip(
+                QString("/dev/i2c-1 · 地址 0x48 · A%1 · ADS 128 SPS 轮询").arg(channel));
+            ui.lblPressureStatus[channel]->setStyleSheet(
+                "font-size: 11px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+                "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
+        } else {
+            ui.lblPressureStatus[channel]->setText("警告");
+            ui.lblPressureStatus[channel]->setToolTip(warning);
+            ui.lblPressureStatus[channel]->setStyleSheet(
+                "font-size: 11px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
+        }
+        compactPressureStates[channel] = pressureText;
+        refreshCompactDeviceState();
+    });
+    QObject::connect(pressureSensor,
+                     &Ads1115PressureSensor::errorOccurred,
+                     &window,
+                     [&](const QString& error) {
+        for (int channel = 0; channel < 3; ++channel) {
+            ui.lblPressureValue[channel]->setText("不可用");
+            ui.lblPressureStatus[channel]->setText("通信错误");
+            ui.lblPressureStatus[channel]->setToolTip(
+                QString("ADS1115 通信错误：%1；请检查 I2C 接线并运行 i2cdetect -y 1").arg(error));
+            ui.lblPressureStatus[channel]->setStyleSheet(
+                "font-size: 11px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
+            compactPressureStates[channel] = "不可用";
+        }
+        ui.btnPressureZero->setEnabled(pressureSensor->isReady());
+        ui.btnPressureControlStart->setEnabled(false);
+        latestPressureTimeMs = {{0, 0, 0}};
+        if (!pressureSensor->isReady()) {
+            ui.btnPumpStart->setEnabled(pumpReady && !is_pump_running);
+        }
+        refreshCompactDeviceState();
+    });
+    QObject::connect(ui.btnPressureZero, &QPushButton::clicked, [&]() {
+        if (is_pump_running) {
+            vacuum_pump.set_duty_cycle(0.0);
+            is_pump_running = false;
+            ui.btnPumpStop->setEnabled(false);
+            refreshPumpState();
+        }
+        ui.btnPumpStart->setEnabled(false);
+        pressureSensor->startZeroCalibration();
+    });
+    if (!pressureSensor->start()) {
+        ui.btnPressureZero->setEnabled(false);
+        ui.btnPressureControlStart->setEnabled(false);
     }
 
     QObject::connect(ui.sliderPump, &QSlider::valueChanged, [&](int val) {
@@ -508,15 +645,219 @@ int main(int argc, char *argv[]) {
     };
     auto showValveCurrent = [&](double currentMilliamp) {
         const double opening = N4IOA01Valve::currentToOpening(currentMilliamp);
-        ui.lblValveCurrent->setText(QString("对应输出: %1 mA").arg(currentMilliamp, 0, 'f', 2));
+        ui.lblValveCurrent->setText(QString("%1 mA").arg(currentMilliamp, 0, 'f', 2));
         ui.sbValveOpening->setValue(opening);
     };
+
+    const std::array<double, 3> pressureFullScalePa = {{40000.0, 500.0, 300.0}};
+    PressureValveController pressureValveController;
+    QTimer pressureControlTimer;
+    pressureControlTimer.setInterval(500);
+    pressureControlTimer.setTimerType(Qt::PreciseTimer);
+    QElapsedTimer pressureControlElapsed;
+    bool pressureControlActive = false;
+
+    auto selectedPressureChannel = [&]() {
+        const int channel = ui.cmbPressureControlChannel->currentData().toInt();
+        return channel >= 0 && channel < 3 ? channel : 0;
+    };
+    auto targetPressurePa = [&]() {
+        return selectedPressureChannel() == 0
+            ? ui.sbPressureTarget->value() * 1000.0
+            : ui.sbPressureTarget->value();
+    };
+    auto setPressureControlUi = [&](bool active) {
+        pressureControlActive = active;
+        ui.cmbPressureControlChannel->setEnabled(!active);
+        ui.sbPressureTarget->setEnabled(!active);
+        ui.cmbPressureControlDirection->setEnabled(!active);
+        ui.sbPressureKp->setEnabled(!active);
+        ui.sbPressureKi->setEnabled(!active);
+        ui.btnPressureControlStart->setEnabled(
+            !active && pressureSensor->isReady() && !pressureSensor->isZeroing());
+        ui.btnPressureControlStop->setEnabled(active);
+        ui.btnValveApply->setEnabled(!active);
+        ui.btnValveRead->setEnabled(!active);
+        ui.sbValveOpening->setEnabled(!active);
+        ui.btnPressureZero->setEnabled(
+            !active && pressureSensor->isReady() && !pressureSensor->isZeroing());
+    };
+    auto stopPressureControl = [&](const QString& reason,
+                                   bool safeClose,
+                                   bool showWarning) {
+        if (!pressureControlActive) return;
+        pressureControlTimer.stop();
+        setPressureControlUi(false);
+
+        QString closeError;
+        if (safeClose) {
+            if (proportional_valve.safeClose(&closeError)) {
+                showValveCurrent(4.0);
+                setValveStatus("闭环已停止，模块已确认安全输出 4.00 mA。", false);
+            } else {
+                setValveStatus(QString("闭环已停止，但安全关闭失败: %1").arg(closeError), true);
+            }
+        }
+
+        QString status = reason;
+        if (!closeError.isEmpty()) status += QString("；安全关闭失败：%1").arg(closeError);
+        ui.lblPressureControlStatus->setText(status);
+        ui.lblPressureControlStatus->setStyleSheet(
+            "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+            "border: 1px solid #F5B7B1; border-radius: 6px; padding: 6px 9px;");
+        if (showWarning) {
+            QMessageBox::warning(&window, "压差闭环已停止", status);
+        }
+    };
+
+    auto updatePressureTargetEditor = [&]() {
+        const bool isKpa = selectedPressureChannel() == 0;
+        ui.sbPressureTarget->setRange(0.0, isKpa ? 40.0 : pressureFullScalePa[selectedPressureChannel()]);
+        ui.sbPressureTarget->setDecimals(isKpa ? 3 : 1);
+        ui.sbPressureTarget->setSingleStep(isKpa ? 0.1 : 1.0);
+        ui.sbPressureTarget->setSuffix(isKpa ? " kPa" : " Pa");
+        ui.sbPressureTarget->setValue(0.0);
+    };
+    QObject::connect(ui.cmbPressureControlChannel,
+                     QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     [&](int) { updatePressureTargetEditor(); });
+    updatePressureTargetEditor();
+
+    QObject::connect(ui.btnPressureControlStart, &QPushButton::clicked, [&]() {
+        const int channel = selectedPressureChannel();
+        const qint64 ageMs = QDateTime::currentMSecsSinceEpoch() - latestPressureTimeMs[channel];
+        if (!pressureSensor->isReady() || pressureSensor->isZeroing() ||
+            latestPressureTimeMs[channel] == 0 || ageMs > 1500 ||
+            !std::isfinite(latestPressurePa[channel])) {
+            QMessageBox::warning(&window, "无法启动压差闭环", "所选压差传感器尚无有效的新鲜测量值。");
+            return;
+        }
+        if (!latestPressureWarnings[channel].isEmpty()) {
+            QMessageBox::warning(&window,
+                                 "无法启动压差闭环",
+                                 QString("所选传感器当前报警：%1").arg(latestPressureWarnings[channel]));
+            return;
+        }
+        if (!is_pump_running) {
+            QMessageBox::warning(&window, "无法启动压差闭环", "请先启动气泵，再启动压差闭环。");
+            return;
+        }
+
+        double confirmedCurrent = 0.0;
+        QString error;
+        const double initialOpening = ui.sbValveOpening->value();
+        if (!proportional_valve.setOpeningPercent(initialOpening, &confirmedCurrent, &error)) {
+            showValveError("启动闭环前确认比例阀输出", error);
+            return;
+        }
+
+        PressureValveController::Parameters parameters;
+        parameters.kp = ui.sbPressureKp->value();
+        parameters.ki = ui.sbPressureKi->value();
+        parameters.deadbandPercentOfFullScale = 0.20;
+        parameters.maxStepPercent = 5.0;
+        pressureValveController.setParameters(parameters);
+        pressureValveController.reset(initialOpening);
+        showValveCurrent(confirmedCurrent);
+        setPressureControlUi(true);
+        pressureControlElapsed.start();
+        pressureControlTimer.start();
+        ui.lblPressureControlStatus->setText(
+            QString("闭环运行中：A%1，目标 %2，控制输出从 %3 % 开始。")
+                .arg(channel)
+                .arg(channel == 0
+                         ? QString("%1 kPa").arg(targetPressurePa() / 1000.0, 0, 'f', 3)
+                         : QString("%1 Pa").arg(targetPressurePa(), 0, 'f', 1))
+                .arg(initialOpening, 0, 'f', 1));
+        ui.lblPressureControlStatus->setStyleSheet(
+            "font-size: 12px; color: #117A65; font-weight: bold; background: #E8F8F5; "
+            "border: 1px solid #A3E4D7; border-radius: 6px; padding: 6px 9px;");
+    });
+
+    QObject::connect(&pressureControlTimer, &QTimer::timeout, [&]() {
+        if (!pressureControlActive) return;
+        const int channel = selectedPressureChannel();
+        const qint64 ageMs = QDateTime::currentMSecsSinceEpoch() - latestPressureTimeMs[channel];
+        if (!pressureSensor->isReady() || pressureSensor->isZeroing() ||
+            latestPressureTimeMs[channel] == 0 || ageMs > 1500 ||
+            !std::isfinite(latestPressurePa[channel])) {
+            stopPressureControl("压差反馈丢失或超时，闭环已安全停止。", true, true);
+            return;
+        }
+        if (!latestPressureWarnings[channel].isEmpty()) {
+            stopPressureControl(
+                QString("压差传感器报警：%1。闭环已安全停止。")
+                    .arg(latestPressureWarnings[channel]),
+                true,
+                true);
+            return;
+        }
+        if (!is_pump_running) {
+            stopPressureControl("气泵已停止，压差闭环已安全停止。", true, false);
+            return;
+        }
+
+        const double elapsedSeconds = std::max(
+            0.1,
+            std::min(2.0, static_cast<double>(pressureControlElapsed.restart()) / 1000.0));
+        const bool openingRaisesPressure =
+            ui.cmbPressureControlDirection->currentData().toBool();
+        const double previousOpening = pressureValveController.openingPercent();
+        const double opening = pressureValveController.update(targetPressurePa(),
+                                                                latestPressurePa[channel],
+                                                                pressureFullScalePa[channel],
+                                                                elapsedSeconds,
+                                                                openingRaisesPressure);
+        double confirmedCurrent = N4IOA01Valve::openingToCurrent(opening);
+        if (std::abs(opening - previousOpening) >= 0.05) {
+            QString error;
+            if (!proportional_valve.setOpeningPercent(opening, &confirmedCurrent, &error)) {
+                stopPressureControl(QString("比例阀通信失败：%1。闭环已停止。").arg(error),
+                                    true,
+                                    true);
+                return;
+            }
+            showValveCurrent(confirmedCurrent);
+        }
+
+        const double errorPa = targetPressurePa() - latestPressurePa[channel];
+        ui.lblPressureControlStatus->setText(
+            QString("闭环运行：A%1  目标 %2 Pa  当前 %3 Pa  误差 %4 Pa  开度 %5 %  输出 %6 mA")
+                .arg(channel)
+                .arg(targetPressurePa(), 0, 'f', 1)
+                .arg(latestPressurePa[channel], 0, 'f', 1)
+                .arg(errorPa, 0, 'f', 1)
+                .arg(opening, 0, 'f', 1)
+                .arg(confirmedCurrent, 0, 'f', 2));
+    });
+
+    QObject::connect(ui.btnPressureControlStop, &QPushButton::clicked, [&]() {
+        stopPressureControl("用户停止了压差闭环，比例阀已回到安全最小开度。", true, false);
+    });
+    QObject::connect(ui.btnPumpStop, &QPushButton::clicked, [&]() {
+        stopPressureControl("气泵已停止，压差闭环已安全停止。", true, false);
+    });
+    QObject::connect(pressureSensor, &Ads1115PressureSensor::errorOccurred,
+                     [&](const QString& error) {
+        stopPressureControl(QString("压差传感器通信错误：%1。闭环已安全停止。").arg(error),
+                            true,
+                            true);
+    });
+    QObject::connect(pressureSensor, &Ads1115PressureSensor::zeroCalibrationFinished,
+                     [&](int, double, double) {
+        if (!pressureControlActive && !pressureSensor->isZeroing()) {
+            setPressureControlUi(false);
+        }
+    });
+    QObject::connect(ui.btnValveClose, &QPushButton::clicked, [&]() {
+        stopPressureControl("比例阀执行安全关闭，压差闭环已停止。", false, false);
+    });
 
     QObject::connect(ui.sbValveOpening,
                      QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                      [&](double opening) {
         ui.lblValveCurrent->setText(
-            QString("对应输出: %1 mA")
+            QString("%1 mA")
                 .arg(N4IOA01Valve::openingToCurrent(opening), 0, 'f', 2));
     });
     QObject::connect(ui.btnValveApply, &QPushButton::clicked, [&]() {
@@ -569,17 +910,22 @@ int main(int argc, char *argv[]) {
         ui.btnOpcFanStop->setEnabled(false);
         refreshAuxState();
     });
-    QObject::connect(ui.btnCaseFan1Start, &QPushButton::clicked, [&]() {
-        is_case_fan_1_running = case_fan_1.set(true);
-        ui.btnCaseFan1Start->setEnabled(!is_case_fan_1_running && caseFan1Ready);
-        ui.btnCaseFan1Stop->setEnabled(is_case_fan_1_running);
+    QObject::connect(ui.btnBypassHighFlow, &QPushButton::clicked, [&]() {
+        is_bypass_valve_open = bypass_valve.set(true);
+        if (is_bypass_valve_open) {
+            currentSampleFlowMlMin = BYPASS_HIGH_FLOW_ML_MIN;
+        }
+        ui.btnBypassHighFlow->setEnabled(!is_bypass_valve_open && bypassValveReady);
+        ui.btnBypassLowFlow->setEnabled(is_bypass_valve_open);
         refreshAuxState();
     });
-    QObject::connect(ui.btnCaseFan1Stop, &QPushButton::clicked, [&]() {
-        case_fan_1.set(false);
-        is_case_fan_1_running = false;
-        ui.btnCaseFan1Start->setEnabled(caseFan1Ready);
-        ui.btnCaseFan1Stop->setEnabled(false);
+    QObject::connect(ui.btnBypassLowFlow, &QPushButton::clicked, [&]() {
+        if (bypass_valve.set(false)) {
+            is_bypass_valve_open = false;
+            currentSampleFlowMlMin = BYPASS_LOW_FLOW_ML_MIN;
+        }
+        ui.btnBypassHighFlow->setEnabled(!is_bypass_valve_open && bypassValveReady);
+        ui.btnBypassLowFlow->setEnabled(is_bypass_valve_open);
         refreshAuxState();
     });
     QObject::connect(ui.btnLiquidStart, &QPushButton::clicked, [&]() {
@@ -720,19 +1066,20 @@ int main(int argc, char *argv[]) {
         delete liquidSystem;
         liquidSystem = nullptr;
     }
+    pressureSensor->stop();
     QString valveShutdownError;
     proportional_valve.safeClose(&valveShutdownError);
     proportional_valve.close();
     vacuum_pump.set_duty_cycle(0);
     opc_fan.set(false);
-    case_fan_1.set(false);
+    bypass_valve.set(false);
     peltier_cond.set_duty_cycle(0);
     heater_sat.set_duty_cycle(0);
     opc_heater.set_duty_cycle(0);
     vacuum_pump.release();
     opc_heater.release();
     opc_fan.release();
-    case_fan_1.release();
+    bypass_valve.release();
     daqWorker->stopDaq();
     if (!daqWorker->wait(6000)) {
         // D2XX 调用理论上会在读取超时后返回。若驱动异常导致超时仍未结束，
