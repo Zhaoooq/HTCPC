@@ -1,6 +1,6 @@
-# CPC_1 凝结核粒子计数器主控平台
+# CPC 凝结核粒子计数器主控平台
 
-`CPC_1` 是运行在 Raspberry Pi 5 上的 CPC（Condensation Particle Counter，凝结核粒子计数器）整机控制程序。项目使用 Qt 5/C++ 构建图形界面，将 OPC 原始信号采集与计数、颗粒数浓度计算、三段温度监测与控制、气泵和比例阀控制、三路压差测量、液位自动补液、手动排液及整机安全关机集中在一个全屏操作平台中。
+`CPC` 是运行在 Raspberry Pi 5 上的凝结核粒子计数器（Condensation Particle Counter）整机控制程序。项目使用 Qt 5/C++ 构建图形界面，将 OPC 原始信号采集与计数、颗粒数浓度计算、三段温度监测与控制、气泵和比例阀控制、三路压差测量、液位自动补液、手动排液及整机安全关机集中在一个全屏操作平台中。
 
 > 本仓库面向实际硬件。编译成功只能证明软件可以构建，不能替代接线、电平、流量、温度和阀门动作的实机验证。首次运行前请先确认执行器默认状态安全。
 
@@ -263,7 +263,7 @@ cd /home/pi/Desktop/CPC_1
 `deployment/` 提供 Raspberry Pi 整机部署文件，包括：
 
 - GXY Plymouth 开机画面。
-- LightDM 桌面登录后的 CPC_1 自动启动项。
+- LightDM 桌面登录后的 CPC 自动启动项。
 - LXDE/labwc 会话配置和顶部面板自动隐藏。
 - Raspberry Pi 5 EEPROM 启动画面配置。
 - 禁用重复的 `wayvnc` 服务和不需要的 `NetworkManager-wait-online` 等待。
