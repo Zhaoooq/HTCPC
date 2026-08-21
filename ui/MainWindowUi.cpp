@@ -564,8 +564,8 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnPumpStop->setStyleSheet(solidButtonStyle("#7F8C8D", "#626F70"));
     ui.sliderPump = new QSlider(Qt::Horizontal);
     ui.sliderPump->setRange(0, 100);
-    ui.sliderPump->setValue(30);
-    ui.lblPumpValue = new QLabel("30 %");
+    ui.sliderPump->setValue(100);
+    ui.lblPumpValue = new QLabel("100 %");
     ui.lblPumpValue->setStyleSheet("font-size: 18px; color: #27AE60; font-weight: bold;");
     QLabel *pumpPowerLabel = new QLabel("抽气功率");
     pumpPowerLabel->setStyleSheet("font-size: 15px; color: #566573;");

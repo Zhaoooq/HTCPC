@@ -10,6 +10,7 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -61,16 +62,16 @@ void TouchDoubleSpinBox::openNumericKeypad() {
     QDialog dialog(this);
     dialog.setWindowTitle(inputTitle_.isEmpty() ? QStringLiteral("输入数值") : inputTitle_);
     dialog.setModal(true);
-    dialog.setMinimumSize(440, 520);
+    dialog.setMinimumSize(500, 650);
     dialog.setStyleSheet(
-        "QDialog { background: #F4F7F9; }"
+        "QDialog { background: #EAF0F4; }"
         "QLabel { background: transparent; color: #526471; }"
         "QLineEdit { min-height: 62px; padding: 4px 14px; background: #FFFFFF; "
         "color: #1F4E68; border: 2px solid #2E86C1; border-radius: 9px; "
         "font-size: 29px; font-weight: bold; }"
-        "QPushButton { min-width: 76px; min-height: 58px; background: #FFFFFF; "
+        "QPushButton { min-width: 90px; min-height: 64px; background: #FFFFFF; "
         "color: #2C3E50; border: 1px solid #C6D2DA; border-radius: 9px; "
-        "font-size: 22px; font-weight: bold; outline: none; }"
+        "font-size: 24px; font-weight: bold; outline: none; }"
         "QPushButton:focus { outline: none; }"
         "QPushButton:pressed { background: #DCEAF3; border-color: #2E86C1; }"
         "QPushButton:disabled { background: #E8ECEF; color: #A6B0B7; }"
@@ -80,8 +81,8 @@ void TouchDoubleSpinBox::openNumericKeypad() {
     );
 
     QVBoxLayout *root = new QVBoxLayout(&dialog);
-    root->setContentsMargins(18, 16, 18, 16);
-    root->setSpacing(10);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(14);
 
     QLabel *title = new QLabel(dialog.windowTitle());
     title->setAlignment(Qt::AlignCenter);
@@ -104,13 +105,16 @@ void TouchDoubleSpinBox::openNumericKeypad() {
     root->addWidget(rangeHint);
 
     QGridLayout *keys = new QGridLayout();
-    keys->setSpacing(8);
+    keys->setHorizontalSpacing(12);
+    keys->setVerticalSpacing(12);
     root->addLayout(keys, 1);
 
     bool replaceOnNextDigit = true;
     auto makeButton = [&](const QString& text, int row, int column) {
         QPushButton *button = new QPushButton(text);
-        keys->addWidget(button, row, column);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setFixedHeight(64);
+        keys->addWidget(button, row, column, Qt::AlignVCenter);
         return button;
     };
     auto appendCharacter = [&](const QString& character) {
@@ -151,12 +155,15 @@ void TouchDoubleSpinBox::openNumericKeypad() {
     QPushButton *decimalButton = makeButton(QStringLiteral("."), 3, 2);
     decimalButton->setEnabled(decimals() > 0);
     QObject::connect(decimalButton, &QPushButton::clicked, &dialog, [&]() { appendCharacter("."); });
+    for (int row = 0; row < 4; ++row) keys->setRowStretch(row, 1);
 
     QHBoxLayout *editButtons = new QHBoxLayout();
-    editButtons->setSpacing(8);
+    editButtons->setSpacing(12);
     QPushButton *clearButton = new QPushButton(QStringLiteral("清空"));
     clearButton->setObjectName("clearButton");
     QPushButton *backspaceButton = new QPushButton(QStringLiteral("退格"));
+    clearButton->setFixedHeight(64);
+    backspaceButton->setFixedHeight(64);
     editButtons->addWidget(clearButton);
     editButtons->addWidget(backspaceButton);
     root->addLayout(editButtons);
@@ -174,11 +181,13 @@ void TouchDoubleSpinBox::openNumericKeypad() {
     });
 
     QHBoxLayout *actionButtons = new QHBoxLayout();
-    actionButtons->setSpacing(8);
+    actionButtons->setSpacing(12);
     QPushButton *cancelButton = new QPushButton(QStringLiteral("取消"));
     cancelButton->setObjectName("cancelButton");
     QPushButton *confirmButton = new QPushButton(QStringLiteral("确定"));
     confirmButton->setObjectName("confirmButton");
+    cancelButton->setFixedHeight(64);
+    confirmButton->setFixedHeight(64);
     actionButtons->addWidget(cancelButton);
     actionButtons->addWidget(confirmButton);
     root->addLayout(actionButtons);

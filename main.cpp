@@ -1093,6 +1093,26 @@ int main(int argc, char *argv[]) {
         setValveStatus("安全关闭成功: 模块已确认输出 4.00 mA，阀门开度 0.0 %", false);
     });
 
+    // Apply the value shown in the editor at startup.  The UI default is 80%,
+    // so this performs a real N4IOA01 write instead of only displaying it.
+    QTimer::singleShot(250, &window, [&]() {
+        const double opening = ui.sbValveOpening->value();
+        double currentMilliamp = 0.0;
+        QString error;
+        if (!proportional_valve.setOpeningPercent(opening, &currentMilliamp, &error)) {
+            setValveStatus(QString("默认开度 %1 % 自动设置失败: %2")
+                               .arg(opening, 0, 'f', 1)
+                               .arg(error),
+                           true);
+            return;
+        }
+        showValveCurrent(currentMilliamp);
+        setValveStatus(QString("默认开度已自动设置: %1 %，模块已确认输出 %2 mA")
+                           .arg(opening, 0, 'f', 1)
+                           .arg(currentMilliamp, 0, 'f', 2),
+                       false);
+    });
+
     QObject::connect(ui.btnBypassHighFlow, &QPushButton::clicked, [&]() {
         is_bypass_valve_open = bypass_valve.set(true);
         if (is_bypass_valve_open) {
