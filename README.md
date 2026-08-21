@@ -21,22 +21,59 @@
 ## 系统组成与数据流
 
 ```mermaid
-flowchart LR
-    FTDI[FTDI MPSSE] --> ADS8688[ADS8688 CH1]
-    ADS8688 --> OPC[OPC 脉冲识别]
-    OPC --> Count[计数与浓度]
-    Count --> UI[Qt 主界面/趋势图/CSV]
+flowchart TB
+    subgraph Startup[启动自检与热机互锁]
+        direction LR
+        Launch[程序启动] --> Check[快速自检<br/>液位正常 / 气泵确认关闭]
+        Check --> TempEnable[自动开启三段温控]
+        TempEnable --> Warmup[10 分钟热机<br/>采集与气泵锁定]
+        Warmup --> Ready[热机完成<br/>允许采集]
+    end
 
-    PT100[三路 PT100/MAX31865] --> Temp[温控算法]
-    Temp --> PWM[冷凝制冷 PWM/饱和加热 PWM]
+    subgraph Temperature[三段温度闭环]
+        direction LR
+        PT100[三路 PT100/MAX31865] --> TempPID[冷凝 / 饱和 / OPC<br/>独立温控算法]
+        TempPID --> CondPWM[冷凝制冷 PWM]
+        TempPID --> SatPWM[饱和加热 PWM]
+        TempPID --> OpcPWM[OPC 加热 PWM]
+        PT100 --> Lamps[温度达到目标 ±1 ℃<br/>状态灯变绿]
+    end
+    TempEnable --> TempPID
 
-    ADS1115[ADS1115 三路压差] --> PI[目标压差 PI]
-    PI --> N4[N4IOA01 4–20 mA]
-    N4 --> Valve[比例阀]
+    subgraph Acquisition[OPC 采集与气路]
+        direction LR
+        Acq[开始采集] --> Pump[气泵 100%]
+        Acq --> FTDI[FTDI MPSSE]
+        FTDI --> ADS8688[ADS8688 CH1]
+        ADS8688 --> OPC[OPC 脉冲识别]
+        OPC --> Count[计数与浓度]
+        Count --> UI[Qt 主界面 / 趋势图 / CSV]
+        Pump --> FlowMode[0.3 / 1.5 L/min<br/>旁路流量模式]
+    end
+    Ready --> Acq
 
-    Level[液位传感器] --> Liquid[补排液互锁]
-    Liquid --> Inlet[进液阀]
-    Liquid --> Outlet[排液阀]
+    subgraph Pressure[比例阀与压差闭环]
+        direction LR
+        ValveDefault[启动自动设置<br/>80% / 16.80 mA] --> N4[N4IOA01 4–20 mA]
+        ADS1115[ADS1115 三路压差] --> PI[目标压差 PI]
+        PI --> N4
+        N4 --> Valve[比例阀]
+    end
+    Launch --> ValveDefault
+
+    subgraph LiquidLevel[液位控制]
+        direction LR
+        Level[液位传感器] --> Liquid[补排液互锁]
+        Liquid --> Inlet[进液阀]
+        Liquid --> Outlet[排液阀]
+    end
+    Level --> Check
+
+    subgraph Shutdown[统一安全停机]
+        direction LR
+        Exit[正常退出 / 终止信号] --> StopTimers[停止采集与控制定时器]
+        StopTimers --> SafeOutputs[三段温控和气泵归零<br/>阀门关闭 / 比例阀 4.00 mA]
+    end
 ```
 
 ## 界面页面
