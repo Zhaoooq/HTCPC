@@ -24,11 +24,11 @@ struct MainWindowUi {
     QLabel *lblParticleConcentration = nullptr;
     QLabel *lblStatus = nullptr;
     QLabel *lblCaptureState = nullptr;
+    QLabel *lblWarmupCountdown = nullptr;
     QLabel *lblOverviewCondLamp = nullptr;
     QLabel *lblOverviewSatLamp = nullptr;
     QLabel *lblOverviewOpcLamp = nullptr;
     QLabel *lblOverviewPump = nullptr;
-    QLabel *lblOverviewAux = nullptr;
     QLabel *lblOverviewLiquidLamp = nullptr;
     QLabel *lblCompactDeviceState = nullptr;
 
@@ -54,6 +54,13 @@ struct MainWindowUi {
     QLabel *lblSatPwm = nullptr;
     QLabel *lblOpcTemp = nullptr;
     QLabel *lblOpcPwm = nullptr;
+    QComboBox *cmbTempPidSegment = nullptr;
+    QDoubleSpinBox *sbTempKp = nullptr;
+    QDoubleSpinBox *sbTempKi = nullptr;
+    QDoubleSpinBox *sbTempKd = nullptr;
+    QPushButton *btnTempPidApply = nullptr;
+    QPushButton *btnTempPidReset = nullptr;
+    QLabel *lblTempPidStatus = nullptr;
 
     QPushButton *btnPumpStart = nullptr;
     QPushButton *btnPumpStop = nullptr;
@@ -81,11 +88,9 @@ struct MainWindowUi {
     QLabel *lblPressureStatus[3] = {nullptr, nullptr, nullptr};
     QPushButton *btnPressureZero = nullptr;
 
-    QPushButton *btnOpcFanStart = nullptr;
-    QPushButton *btnOpcFanStop = nullptr;
     QPushButton *btnBypassHighFlow = nullptr;
     QPushButton *btnBypassLowFlow = nullptr;
-    QLabel *lblAuxState = nullptr;
+    QLabel *lblFlowModeState = nullptr;
 
     QPushButton *btnLiquidStart = nullptr;
     QPushButton *btnLiquidStop = nullptr;

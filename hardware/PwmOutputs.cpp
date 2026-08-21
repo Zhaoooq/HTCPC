@@ -111,6 +111,25 @@ bool HardwarePWM::set_duty_cycle(double percentage) {
     return true;
 }
 
+bool HardwarePWM::safeDisable() {
+    bool success = true;
+    if (access(pwm_path.c_str(), F_OK) == 0) {
+        if (!write_sysfs(pwm_path + "duty_cycle", "0")) success = false;
+        if (!write_sysfs(pwm_path + "enable", "0")) success = false;
+    } else {
+        setError("PWM 通道不存在: " + pwm_path);
+        success = false;
+    }
+
+    if (system(("pinctrl set " + to_string(gpio_pin) + " op dl").c_str()) != 0) {
+        setError("GPIO" + to_string(gpio_pin) + " 无法切换为低电平安全状态");
+        success = false;
+    }
+    ready = false;
+    if (success) error_message.clear();
+    return success;
+}
+
 bool HardwarePWM::isReady() const {
     return ready;
 }
@@ -120,12 +139,8 @@ string HardwarePWM::errorString() const {
 }
 
 HardwarePWM::~HardwarePWM() {
-    if (access(pwm_path.c_str(), F_OK) == 0) {
-        write_sysfs(pwm_path + "duty_cycle", "0");
-        write_sysfs(pwm_path + "enable", "0");
-    }
+    safeDisable();
     if (exported) write_sysfs(pwm_chip_path + "unexport", to_string(pwm_channel));
-    system(("pinctrl set " + to_string(gpio_pin) + " op dl").c_str());
 }
 
 LgpioDigitalOutput::LgpioDigitalOutput(int lgpio_handle, int pin)
@@ -158,29 +173,65 @@ LgpioDigitalOutput::~LgpioDigitalOutput() {
 
 LgpioPwmOutput::LgpioPwmOutput(int lgpio_handle, int pin, float frequency_hz)
     : handle(lgpio_handle), gpio(pin), frequency(frequency_hz), claimed(false) {
-    if (handle >= 0) {
-        claimed = (lgGpioClaimOutput(handle, 0, gpio, 0) >= 0);
+    if (frequency <= 0.0f) {
+        error_message = "PWM 频率必须大于 0";
+        return;
+    }
+    if (handle < 0) {
+        error_message = "GPIO 控制器不可用";
+        return;
+    }
+
+    const int result = lgGpioClaimOutput(handle, 0, gpio, 0);
+    claimed = (result >= 0);
+    if (!claimed) {
+        error_message = "无法申请 GPIO" + to_string(gpio) +
+            " PWM 输出，lgpio 错误码 " + to_string(result);
     }
 }
 
 bool LgpioPwmOutput::set_duty_cycle(double percentage) {
-    if (!claimed) return false;
+    if (!claimed) {
+        if (error_message.empty()) error_message = "GPIO PWM 输出未就绪";
+        return false;
+    }
     if (percentage < 0.0) percentage = 0.0;
     if (percentage > 100.0) percentage = 100.0;
     if (percentage == 0.0) {
-        lgTxPwm(handle, gpio, 0, 0, 0, 0);
-        return lgGpioWrite(handle, gpio, 0) >= 0;
+        // Keep a valid PWM period while setting the duty to zero.  Passing an
+        // all-zero waveform is rejected as LG_BAD_PWM_MICROS by lgpio 0.2.2.
+        const int pwm_result = lgTxPwm(handle, gpio, frequency, 0.0, 0, 0);
+        const int write_result = lgGpioWrite(handle, gpio, 0);
+        if (pwm_result < 0 || write_result < 0) {
+            error_message = "GPIO" + to_string(gpio) +
+                " PWM 关闭失败，lgpio 错误码 " +
+                to_string(pwm_result < 0 ? pwm_result : write_result);
+            return false;
+        }
+        error_message.clear();
+        return true;
     }
-    return lgTxPwm(handle, gpio, frequency, percentage, 0, 0) >= 0;
+    const int result = lgTxPwm(handle, gpio, frequency, percentage, 0, 0);
+    if (result < 0) {
+        error_message = "GPIO" + to_string(gpio) +
+            " PWM 写入失败，lgpio 错误码 " + to_string(result);
+        return false;
+    }
+    error_message.clear();
+    return true;
 }
 
 bool LgpioPwmOutput::isReady() const {
     return claimed;
 }
 
+string LgpioPwmOutput::errorString() const {
+    return error_message;
+}
+
 void LgpioPwmOutput::release() {
     if (claimed) {
-        lgTxPwm(handle, gpio, 0, 0, 0, 0);
+        lgTxPwm(handle, gpio, frequency, 0.0, 0, 0);
         lgGpioWrite(handle, gpio, 0);
         lgGpioFree(handle, gpio);
         claimed = false;

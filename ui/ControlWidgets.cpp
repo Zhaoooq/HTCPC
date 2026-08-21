@@ -1,4 +1,5 @@
 #include "ControlWidgets.h"
+#include "TouchDoubleSpinBox.h"
 
 #include <QDoubleSpinBox>
 #include <QGroupBox>
@@ -47,8 +48,10 @@ QGroupBox* createTempGroup(
     btnLayout->addWidget(btnStart);
     btnLayout->addWidget(btnStop);
 
-    spinBox = new QDoubleSpinBox();
+    spinBox = new TouchDoubleSpinBox(QString("设置%1目标温度").arg(title));
     spinBox->setRange(-20, 100);
+    spinBox->setDecimals(1);
+    spinBox->setSingleStep(0.5);
     spinBox->setMinimumHeight(38);
     spinBox->setSuffix(" ℃");
     spinBox->setStyleSheet("QDoubleSpinBox { padding: 4px 8px; background: #F9FBFC; border: 1px solid #C7D1D9; border-radius: 6px; font-size: 15px; } QDoubleSpinBox:focus { border: 2px solid #2E86C1; background: #FFFFFF; }");

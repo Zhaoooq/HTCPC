@@ -67,8 +67,31 @@ void LiquidControlSystem::startMonitoring() {
 }
 
 void LiquidControlSystem::stopMonitoring() {
+    safeStop(nullptr);
+}
+
+bool LiquidControlSystem::safeStop(QString *error) {
     monitorTimer->stop();
-    stopRefill("系统停止监控");
+    refillTimeoutTimer->stop();
+
+    QStringList failures;
+    const int inletResult = inletClaimed ? lgGpioWrite(h, p_inlet, 0) : -1;
+    const int outletResult = outletClaimed ? lgGpioWrite(h, p_outlet, 0) : -1;
+    if (inletResult < 0) {
+        failures << QString("进液阀 GPIO%1 关闭失败（错误码 %2）")
+                        .arg(p_inlet)
+                        .arg(inletResult);
+    }
+    if (outletResult < 0) {
+        failures << QString("排液阀 GPIO%1 关闭失败（错误码 %2）")
+                        .arg(p_outlet)
+                        .arg(outletResult);
+    }
+
+    isRefilling = false;
+    isDraining = false;
+    if (error) *error = failures.join("；");
+    return failures.isEmpty();
 }
 
 void LiquidControlSystem::checkLiquidLevel() {

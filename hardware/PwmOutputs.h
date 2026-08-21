@@ -9,6 +9,7 @@ public:
     ~HardwarePWM();
 
     bool set_duty_cycle(double percentage);
+    bool safeDisable();
     bool isReady() const;
     std::string errorString() const;
 
@@ -49,6 +50,7 @@ public:
 
     bool set_duty_cycle(double percentage);
     bool isReady() const;
+    std::string errorString() const;
     void release();
 
 private:
@@ -56,6 +58,7 @@ private:
     int gpio;
     float frequency;
     bool claimed;
+    std::string error_message;
 };
 
 #endif // CPC_HARDWARE_PWMOUTPUTS_H

@@ -2,6 +2,7 @@
 
 #include "ControlWidgets.h"
 #include "PlotSetup.h"
+#include "TouchDoubleSpinBox.h"
 #include "WatermarkWidget.h"
 #include "../algorithms/OpcCounter.h"
 #include "../hardware/PinMap.h"
@@ -197,12 +198,15 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     app.setFont(QFont("WenQuanYi Micro Hei", 10));
     app.setStyleSheet(
         "QMainWindow, QWidget { background-color: #EEF2F6; color: #263746; font-family: 'WenQuanYi Micro Hei'; }"
+        "QFocusFrame { background: transparent; border: none; }"
         "QLabel { background: transparent; }"
         "QTabWidget::pane { border: 0; }"
         "QTabBar::tab { background: #E5E8EC; color: #2c3e50; min-width: 108px; min-height: 42px; padding: 6px 16px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 16px; font-weight: bold; }"
         "QTabBar::tab:selected { background: #005bac; color: white; }"
         "QPushButton { min-height: 42px; border: 1px solid #CBD5DC; border-radius: 7px; "
-        "background-color: #FFFFFF; color: #34495E; font-size: 14px; font-weight: bold; padding: 0 12px; }"
+        "background-color: #FFFFFF; color: #34495E; font-size: 14px; font-weight: bold; "
+        "padding: 0 12px; outline: none; }"
+        "QPushButton:focus, QToolButton:focus { outline: none; }"
         "QPushButton:hover { background-color: #F4F8FB; border-color: #91A5B4; }"
         "QPushButton:pressed { background-color: #E6EDF2; }"
         "QPushButton:disabled { background-color: #E8ECEF; color: #98A3AB; border-color: #D8DEE3; }"
@@ -275,6 +279,22 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     QHBoxLayout *headerStatusLayout = new QHBoxLayout(headerStatusBar);
     headerStatusLayout->setContentsMargins(0, 0, 8, 0);
     headerStatusLayout->setSpacing(12);
+    QWidget *warmupIndicator = new QWidget();
+    warmupIndicator->setStyleSheet("background: transparent;");
+    QHBoxLayout *warmupIndicatorLayout = new QHBoxLayout(warmupIndicator);
+    warmupIndicatorLayout->setContentsMargins(0, 0, 0, 0);
+    warmupIndicatorLayout->setSpacing(4);
+    QLabel *warmupTitle = new QLabel("热机");
+    warmupTitle->setStyleSheet(
+        "font-size: 16px; color: #2C3E50; font-weight: 800; background: transparent;");
+    ui.lblWarmupCountdown = new QLabel("自检");
+    ui.lblWarmupCountdown->setAlignment(Qt::AlignCenter);
+    ui.lblWarmupCountdown->setMinimumWidth(58);
+    ui.lblWarmupCountdown->setStyleSheet(
+        "font-size: 18px; font-weight: 800; color: #C45F00; background: transparent;");
+    warmupIndicatorLayout->addWidget(warmupTitle);
+    warmupIndicatorLayout->addWidget(ui.lblWarmupCountdown);
+    headerStatusLayout->addWidget(warmupIndicator);
     auto addHeaderStatusIndicator = [&](const QString& title, QLabel *&lamp) {
         QWidget *indicator = new QWidget();
         indicator->setStyleSheet("background: transparent;");
@@ -374,9 +394,8 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     systemLayout->addWidget(ui.btnSaveRaw, 1, 2);
 
     ui.lblOverviewPump = createOverviewValue("关", "#27AE60");
-    ui.lblOverviewAux = createOverviewValue("OPC风扇: 关\n旁路: 0.3 L/min", "#16A085");
 
-    ui.lblCompactDeviceState = new QLabel("气泵: 关    OPC风扇: 关    旁路: 0.3 L/min    压差 A0:初始化  A1:初始化  A2:初始化");
+    ui.lblCompactDeviceState = new QLabel("气泵: 关    流量: 0.3 L/min    压差 A0:初始化  A1:初始化  A2:初始化");
     ui.lblCompactDeviceState->setAlignment(Qt::AlignCenter);
     ui.lblCompactDeviceState->setStyleSheet("font-size: 12px; color: #526471; background: #FFFFFF; border: 1px solid #D8E1E7; border-radius: 7px; padding: 5px 10px;");
     ui.lblCompactDeviceState->setMaximumHeight(28);
@@ -420,55 +439,111 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     tempLayout->setContentsMargins(4, 8, 4, 4);
     tempLayout->setSpacing(8);
 
-    QGroupBox *condGroup = createTempGroup("冷凝段 (制冷)", "#3498DB", ui.sbCond, ui.btnCondStart, ui.btnCondStop, ui.lblCondTemp, ui.lblCondPwm);
-    QGroupBox *satGroup = createTempGroup("饱和段 (加热)", "#E74C3C", ui.sbSat, ui.btnSatStart, ui.btnSatStop, ui.lblSatTemp, ui.lblSatPwm);
-    QGroupBox *opcGroup = createTempGroup("OPC段 (温度监测)", "#F39C12", ui.sbOpc, ui.btnOpcStart, ui.btnOpcStop, ui.lblOpcTemp, ui.lblOpcPwm);
+    QGroupBox *condGroup = createTempGroup("冷凝段", "#3498DB", ui.sbCond, ui.btnCondStart, ui.btnCondStop, ui.lblCondTemp, ui.lblCondPwm);
+    QGroupBox *satGroup = createTempGroup("饱和段", "#E74C3C", ui.sbSat, ui.btnSatStart, ui.btnSatStop, ui.lblSatTemp, ui.lblSatPwm);
+    QGroupBox *opcGroup = createTempGroup("OPC段", "#F39C12", ui.sbOpc, ui.btnOpcStart, ui.btnOpcStop, ui.lblOpcTemp, ui.lblOpcPwm);
 
     ui.sbCond->setValue(10.0);
     ui.sbSat->setValue(40.0);
     ui.sbOpc->setValue(40.0);
-    ui.sbOpc->setEnabled(false);
     ui.btnOpcStart->setEnabled(false);
     ui.btnOpcStop->setEnabled(false);
-    ui.lblOpcPwm->setText(QString("GPIO%1 功率: 0 %").arg(PinMap::PIN_OPC_HEATER_PWM));
+    ui.lblOpcPwm->setText("功率: 0.0 %");
 
-    QLabel *tempHint = new QLabel("温控执行器默认关闭。OPC 段启动时 GPIO6 满功率输出，停止时关闭。");
+    QGroupBox *pidGroup = new QGroupBox("PID 参数调节");
+    pidGroup->setStyleSheet(
+        cardStyle("#8E44AD") +
+        "QGroupBox::title { font-size: 15px; font-weight: 700; letter-spacing: 1px; }");
+    QGridLayout *pidLayout = new QGridLayout(pidGroup);
+    pidLayout->setContentsMargins(14, 28, 14, 11);
+    pidLayout->setHorizontalSpacing(8);
+    pidLayout->setVerticalSpacing(7);
+    ui.cmbTempPidSegment = new QComboBox();
+    ui.cmbTempPidSegment->addItem("冷凝段", 0);
+    ui.cmbTempPidSegment->addItem("饱和段", 1);
+    ui.cmbTempPidSegment->addItem("OPC段", 2);
+    ui.cmbTempPidSegment->setCurrentIndex(1);
+    ui.cmbTempPidSegment->setMinimumHeight(38);
+    ui.cmbTempPidSegment->setStyleSheet(
+        "QComboBox { padding: 5px 9px; background: #FFFFFF; border: 1px solid #C7D1D9; "
+        "border-radius: 7px; color: #243B53; font-size: 14px; font-weight: 600; }"
+        "QComboBox:hover { border-color: #9B59B6; background: #FCFAFD; }"
+        "QComboBox:focus { border: 2px solid #8E44AD; }");
+    ui.sbTempKp = new TouchDoubleSpinBox("设置比例系数 Kp");
+    ui.sbTempKi = new TouchDoubleSpinBox("设置积分系数 Ki");
+    ui.sbTempKd = new TouchDoubleSpinBox("设置微分系数 Kd");
+    const QString pidSpinStyle =
+        "QDoubleSpinBox { min-height: 36px; padding: 3px 7px; background: #F9FBFC; "
+        "border: 1px solid #C7D1D9; border-radius: 7px; color: #243B53; "
+        "font-size: 15px; font-weight: 600; } "
+        "QDoubleSpinBox:hover { border-color: #9B59B6; background: #FCFAFD; } "
+        "QDoubleSpinBox:focus { border: 2px solid #8E44AD; background: #FFFFFF; }";
+    ui.sbTempKp->setRange(0.0, 100.0);
+    ui.sbTempKp->setDecimals(2);
+    ui.sbTempKp->setSingleStep(0.5);
+    ui.sbTempKi->setRange(0.0, 20.0);
+    ui.sbTempKi->setDecimals(3);
+    ui.sbTempKi->setSingleStep(0.05);
+    ui.sbTempKd->setRange(0.0, 300.0);
+    ui.sbTempKd->setDecimals(1);
+    ui.sbTempKd->setSingleStep(5.0);
+    ui.sbTempKp->setStyleSheet(pidSpinStyle);
+    ui.sbTempKi->setStyleSheet(pidSpinStyle);
+    ui.sbTempKd->setStyleSheet(pidSpinStyle);
+    ui.btnTempPidApply = new QPushButton("应用参数");
+    ui.btnTempPidReset = new QPushButton("恢复推荐值");
+    ui.btnTempPidApply->setStyleSheet(
+        solidButtonStyle("#8E44AD", "#6C3483") +
+        "QPushButton { font-size: 14px; font-weight: 700; }");
+    ui.btnTempPidReset->setStyleSheet(
+        solidButtonStyle("#71858A", "#56696E") +
+        "QPushButton { font-size: 13px; font-weight: 600; }");
+    ui.lblTempPidStatus = new QLabel("选择控制段后可查看和修改参数");
+    ui.lblTempPidStatus->setStyleSheet(
+        "font-size: 13px; font-weight: 500; color: #634B6B; background: #F8F3FA; "
+        "border: 1px solid #E4D3EA; border-radius: 6px; padding: 5px 9px;");
+    auto createPidCaption = [](const QString& symbol, const QString& description) {
+        QLabel *label = new QLabel(
+            QString("<span style='font-size:16px; font-weight:700; color:#7D3C98;'>%1</span>"
+                    "&nbsp;&nbsp;<span style='font-size:12px; font-weight:500; "
+                    "color:#607481;'>%2</span>")
+                .arg(symbol, description));
+        label->setTextFormat(Qt::RichText);
+        label->setStyleSheet("padding: 0 1px 1px 1px;");
+        return label;
+    };
+    QLabel *pidSegmentCaption = new QLabel("控制回路");
+    pidSegmentCaption->setStyleSheet(
+        "font-size: 14px; font-weight: 700; color: #34495E; padding: 0 1px 1px 1px;");
+    pidLayout->addWidget(pidSegmentCaption, 0, 0);
+    pidLayout->addWidget(ui.cmbTempPidSegment, 1, 0);
+    pidLayout->addWidget(createPidCaption("Kp", "比例系数"), 0, 1);
+    pidLayout->addWidget(ui.sbTempKp, 1, 1);
+    pidLayout->addWidget(createPidCaption("Ki", "积分系数"), 0, 2);
+    pidLayout->addWidget(ui.sbTempKi, 1, 2);
+    pidLayout->addWidget(createPidCaption("Kd", "微分系数"), 0, 3);
+    pidLayout->addWidget(ui.sbTempKd, 1, 3);
+    pidLayout->addWidget(ui.btnTempPidApply, 1, 4);
+    pidLayout->addWidget(ui.btnTempPidReset, 1, 5);
+    pidLayout->addWidget(ui.lblTempPidStatus, 2, 0, 1, 6);
+    pidLayout->setColumnStretch(0, 2);
+    pidLayout->setColumnStretch(1, 1);
+    pidLayout->setColumnStretch(2, 1);
+    pidLayout->setColumnStretch(3, 1);
+
+    QLabel *tempHint = new QLabel(
+        "<span style='font-weight:700; color:#315D76;'>调参提示</span>"
+        "&nbsp;&nbsp;<span style='color:#526D7C;'>点击“应用参数”后立即生效并保存，同时清空积分状态。"
+        "饱和段采用提前预测断热和接近目标限功率，以降低热惯性造成的超调。</span>");
+    tempHint->setTextFormat(Qt::RichText);
     tempHint->setWordWrap(true);
-    tempHint->setStyleSheet("font-size: 13px; color: #526471; padding: 8px 12px; background: #EAF2F8; border: 1px solid #D4E6F1; border-radius: 7px;");
+    tempHint->setStyleSheet("font-size: 13px; padding: 8px 12px; background: #EAF2F8; border: 1px solid #D4E6F1; border-radius: 7px;");
     tempLayout->addWidget(condGroup, 0, 0);
     tempLayout->addWidget(satGroup, 0, 1);
     tempLayout->addWidget(opcGroup, 0, 2);
-    tempLayout->setRowStretch(3, 1);
-
-    QGroupBox *auxGroup = new QGroupBox("辅助设备与流量模式");
-    auxGroup->setStyleSheet(cardStyle("#16A085"));
-    QGridLayout *auxLayout = new QGridLayout(auxGroup);
-    auxLayout->setContentsMargins(10, 28, 10, 10);
-    auxLayout->setSpacing(10);
-    ui.btnOpcFanStart = new QPushButton(QString("OPC风扇开 G%1").arg(PinMap::PIN_OPC_FAN));
-    ui.btnOpcFanStop = new QPushButton("OPC风扇关");
-    ui.btnBypassHighFlow = new QPushButton(
-        QString("大流量 1.5 L/min  G%1高电平").arg(PinMap::PIN_BYPASS_VALVE));
-    ui.btnBypassLowFlow = new QPushButton(
-        QString("小流量 0.3 L/min  G%1低电平").arg(PinMap::PIN_BYPASS_VALVE));
-    ui.btnOpcFanStart->setMinimumWidth(170);
-    ui.btnOpcFanStop->setMinimumWidth(170);
-    ui.btnBypassHighFlow->setMinimumWidth(210);
-    ui.btnBypassLowFlow->setMinimumWidth(210);
-    ui.btnOpcFanStart->setStyleSheet(solidButtonStyle("#16A085", "#117864"));
-    ui.btnBypassHighFlow->setStyleSheet(solidButtonStyle("#16A085", "#117864"));
-    ui.btnOpcFanStop->setStyleSheet(solidButtonStyle("#7F8C8D", "#626F70"));
-    ui.btnBypassLowFlow->setStyleSheet(solidButtonStyle("#7F8C8D", "#626F70"));
-    ui.lblAuxState = new QLabel("OPC风扇: 关 | 旁路模式: 小流量 0.3 L/min");
-    ui.lblAuxState->setAlignment(Qt::AlignCenter);
-    ui.lblAuxState->setStyleSheet("font-size: 13px; color: #3C596B; background: #F7FAFC; border: 1px solid #DCE4EA; border-radius: 6px; padding: 6px;");
-    auxLayout->addWidget(ui.btnOpcFanStart, 0, 0);
-    auxLayout->addWidget(ui.btnOpcFanStop, 0, 1);
-    auxLayout->addWidget(ui.btnBypassHighFlow, 1, 0);
-    auxLayout->addWidget(ui.btnBypassLowFlow, 1, 1);
-    auxLayout->addWidget(ui.lblAuxState, 3, 0, 1, 2);
-    tempLayout->addWidget(auxGroup, 1, 0, 1, 3);
+    tempLayout->addWidget(pidGroup, 1, 0, 1, 3);
     tempLayout->addWidget(tempHint, 2, 0, 1, 3);
+    tempLayout->setRowStretch(3, 1);
     ui.tabs->addTab(tempTab, "温控");
 
     QWidget *gasTab = new QWidget();
@@ -501,6 +576,41 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     pumpLayout->addWidget(ui.btnPumpStop, 1, 2);
     pumpLayout->setColumnStretch(1, 1);
 
+    QGroupBox *flowModeGroup = new QGroupBox("流量模式");
+    flowModeGroup->setStyleSheet(cardStyle("#16A085"));
+    QVBoxLayout *flowModeLayout = new QVBoxLayout(flowModeGroup);
+    flowModeLayout->setContentsMargins(10, 24, 10, 8);
+    flowModeLayout->setSpacing(7);
+    QHBoxLayout *flowModeButtons = new QHBoxLayout();
+    flowModeButtons->setSpacing(7);
+    ui.btnBypassLowFlow = new QPushButton("小流量\n0.3 L/min");
+    ui.btnBypassHighFlow = new QPushButton("大流量\n1.5 L/min");
+    ui.btnBypassLowFlow->setCheckable(true);
+    ui.btnBypassHighFlow->setCheckable(true);
+    ui.btnBypassLowFlow->setChecked(true);
+    const QString flowModeButtonStyle =
+        "QPushButton { min-height: 46px; padding: 5px 10px; font-size: 14px; "
+        "font-weight: bold; color: #3C596B; background: #F4F7F9; "
+        "border: 1px solid #C8D5DC; border-radius: 8px; }"
+        "QPushButton:hover { background: #E8F4F1; border-color: #6BB8A8; }"
+        "QPushButton:checked { color: #FFFFFF; background: #16A085; "
+        "border: 2px solid #117864; }"
+        "QPushButton:checked:disabled { color: #FFFFFF; background: #16A085; "
+        "border: 2px solid #117864; }"
+        "QPushButton:disabled:!checked { color: #A7B2B9; background: #EEF1F3; "
+        "border-color: #D8DEE2; }";
+    ui.btnBypassLowFlow->setStyleSheet(flowModeButtonStyle);
+    ui.btnBypassHighFlow->setStyleSheet(flowModeButtonStyle);
+    ui.lblFlowModeState = new QLabel("当前：小流量 0.3 L/min");
+    ui.lblFlowModeState->setAlignment(Qt::AlignCenter);
+    ui.lblFlowModeState->setStyleSheet(
+        "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+        "border: 1px solid #A3E4D7; border-radius: 6px; padding: 5px;");
+    flowModeButtons->addWidget(ui.btnBypassLowFlow);
+    flowModeButtons->addWidget(ui.btnBypassHighFlow);
+    flowModeLayout->addLayout(flowModeButtons);
+    flowModeLayout->addWidget(ui.lblFlowModeState);
+
     QGroupBox *valveGroup = new QGroupBox("比例阀");
     valveGroup->setStyleSheet(cardStyle("#2980B9"));
     QGridLayout *valveLayout = new QGridLayout(valveGroup);
@@ -508,15 +618,15 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     valveLayout->setSpacing(8);
     QLabel *valveOpeningLabel = new QLabel("开度");
     valveOpeningLabel->setStyleSheet("font-size: 15px; color: #566573;");
-    ui.sbValveOpening = new QDoubleSpinBox();
+    ui.sbValveOpening = new TouchDoubleSpinBox("设置比例阀开度");
     ui.sbValveOpening->setRange(0.0, 100.0);
     ui.sbValveOpening->setDecimals(1);
     ui.sbValveOpening->setSingleStep(1.0);
     ui.sbValveOpening->setSuffix(" %");
-    ui.sbValveOpening->setValue(0.0);
+    ui.sbValveOpening->setValue(80.0);
     ui.sbValveOpening->setMinimumHeight(36);
     ui.sbValveOpening->setStyleSheet("QDoubleSpinBox { padding: 5px; border: 1px solid #bdc3c7; border-radius: 5px; font-size: 16px; }");
-    ui.lblValveCurrent = new QLabel("4.00 mA");
+    ui.lblValveCurrent = new QLabel("16.80 mA");
     ui.lblValveCurrent->setStyleSheet("font-size: 17px; color: #2980B9; font-weight: bold;");
     ui.btnValveApply = new QPushButton("设置");
     ui.btnValveRead = new QPushButton("读取");
@@ -548,7 +658,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.cmbPressureControlChannel->addItem("A1  0~500 Pa", 1);
     ui.cmbPressureControlChannel->addItem("A2  0~300 Pa", 2);
     ui.cmbPressureControlChannel->setCurrentIndex(1);
-    ui.sbPressureTarget = new QDoubleSpinBox();
+    ui.sbPressureTarget = new TouchDoubleSpinBox("设置目标压差");
     ui.sbPressureTarget->setRange(0.0, 500.0);
     ui.sbPressureTarget->setDecimals(1);
     ui.sbPressureTarget->setSingleStep(1.0);
@@ -556,12 +666,12 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.cmbPressureControlDirection = new QComboBox();
     ui.cmbPressureControlDirection->addItem("开度↑ 压差↑", true);
     ui.cmbPressureControlDirection->addItem("开度↑ 压差↓", false);
-    ui.sbPressureKp = new QDoubleSpinBox();
+    ui.sbPressureKp = new TouchDoubleSpinBox("设置比例系数 Kp");
     ui.sbPressureKp->setRange(0.0, 10.0);
     ui.sbPressureKp->setDecimals(3);
     ui.sbPressureKp->setSingleStep(0.05);
     ui.sbPressureKp->setValue(0.40);
-    ui.sbPressureKi = new QDoubleSpinBox();
+    ui.sbPressureKi = new TouchDoubleSpinBox("设置积分系数 Ki");
     ui.sbPressureKi->setRange(0.0, 10.0);
     ui.sbPressureKi->setDecimals(3);
     ui.sbPressureKi->setSingleStep(0.01);
@@ -659,6 +769,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     actuatorLayout->setSpacing(6);
     actuatorLayout->addWidget(pumpGroup, 1);
     actuatorLayout->addWidget(valveGroup, 1);
+    actuatorLayout->addWidget(flowModeGroup, 1);
     gasMainLayout->addLayout(actuatorLayout);
     gasMainLayout->addWidget(pressureControlGroup);
     gasMainLayout->addWidget(pressureGroup);
@@ -731,21 +842,21 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     algorithmGrid->setHorizontalSpacing(10);
     algorithmGrid->setVerticalSpacing(12);
 
-    QDoubleSpinBox *sbCutoff = new QDoubleSpinBox();
+    QDoubleSpinBox *sbCutoff = new TouchDoubleSpinBox("设置阈值下限");
     sbCutoff->setRange(0.001, 2.0);
     sbCutoff->setDecimals(4);
     sbCutoff->setSingleStep(0.005);
     sbCutoff->setSuffix(" V");
     sbCutoff->setValue(opcParams.minRange);
 
-    QDoubleSpinBox *sbCutoffOffset = new QDoubleSpinBox();
+    QDoubleSpinBox *sbCutoffOffset = new TouchDoubleSpinBox("设置阈值偏置");
     sbCutoffOffset->setRange(-1.0, 1.0);
     sbCutoffOffset->setDecimals(4);
     sbCutoffOffset->setSingleStep(0.001);
     sbCutoffOffset->setSuffix(" V");
     sbCutoffOffset->setValue(opcParams.thresholdOffset);
 
-    QDoubleSpinBox *sbCutoffInterval = new QDoubleSpinBox();
+    QDoubleSpinBox *sbCutoffInterval = new TouchDoubleSpinBox("设置计算间隔");
     sbCutoffInterval->setRange(1.0, 1000.0);
     sbCutoffInterval->setDecimals(1);
     sbCutoffInterval->setSingleStep(1.0);

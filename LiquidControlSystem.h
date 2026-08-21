@@ -22,6 +22,7 @@ public:
 
     void startMonitoring(); // 开启自动液位监控
     void stopMonitoring();  // 停止监控
+    bool safeStop(QString *error = nullptr); // 停止监控并确认进、排液阀均已关闭
 
 public slots:
     void startManualDrain(); // 开始手动排废液 (绑定UI按钮按下)

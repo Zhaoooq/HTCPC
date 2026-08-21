@@ -25,6 +25,7 @@ SOURCES += \
     ui/Formatters.cpp \
     ui/MainWindowUi.cpp \
     ui/PlotSetup.cpp \
+    ui/TouchDoubleSpinBox.cpp \
     ui/WatermarkWidget.cpp \
     qcustomplot.cpp \
     LiquidControlSystem.cpp
@@ -44,6 +45,7 @@ HEADERS += \
     ui/Formatters.h \
     ui/MainWindowUi.h \
     ui/PlotSetup.h \
+    ui/TouchDoubleSpinBox.h \
     ui/WatermarkWidget.h \
     qcustomplot.h \
     LiquidControlSystem.h

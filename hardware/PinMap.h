@@ -11,7 +11,6 @@ namespace PinMap {
     constexpr int PIN_LEVEL_SENSOR = 27;     // Pin 13
     constexpr int PIN_INLET_VALVE = 22;      // Pin 15
     constexpr int PIN_OUTLET_VALVE = 25;     // Pin 22
-    constexpr int PIN_OPC_FAN = 5;           // Pin 29
     constexpr int PIN_BYPASS_VALVE = 24;     // Pin 18; high: 1.5 L/min, low: 0.3 L/min
     constexpr int PIN_OPC_HEATER_PWM = 6;    // Pin 31, OPC heater PWM
 }
