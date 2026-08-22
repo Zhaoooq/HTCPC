@@ -9,11 +9,11 @@
 class LiquidControlSystem : public QObject {
     Q_OBJECT
 public:
-    // 默认引脚：液位传感器27，进液电磁阀22，排液电磁阀25
+    // 默认引脚：液位传感器27，进液电磁阀22，排液电磁阀6
     explicit LiquidControlSystem(int lgpio_handle, 
                                  int sensor_pin = 27, 
                                  int inlet_pin = 22, 
-                                 int outlet_pin = 25,
+                                 int outlet_pin = 6,
                                  QObject *parent = nullptr);
     ~LiquidControlSystem();
 
