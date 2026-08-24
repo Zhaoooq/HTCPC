@@ -68,10 +68,10 @@ void TouchDoubleSpinBox::openNumericKeypad() {
         "QLabel { background: transparent; color: #526471; }"
         "QLineEdit { min-height: 62px; padding: 4px 14px; background: #FFFFFF; "
         "color: #1F4E68; border: 2px solid #2E86C1; border-radius: 9px; "
-        "font-size: 29px; font-weight: bold; }"
+        "font-size: 30px; font-weight: bold; }"
         "QPushButton { min-width: 90px; min-height: 64px; background: #FFFFFF; "
         "color: #2C3E50; border: 1px solid #C6D2DA; border-radius: 9px; "
-        "font-size: 24px; font-weight: bold; outline: none; }"
+        "font-size: 25px; font-weight: bold; outline: none; }"
         "QPushButton:focus { outline: none; }"
         "QPushButton:pressed { background: #DCEAF3; border-color: #2E86C1; }"
         "QPushButton:disabled { background: #E8ECEF; color: #A6B0B7; }"
@@ -86,7 +86,7 @@ void TouchDoubleSpinBox::openNumericKeypad() {
 
     QLabel *title = new QLabel(dialog.windowTitle());
     title->setAlignment(Qt::AlignCenter);
-    title->setStyleSheet("font-size: 20px; font-weight: bold; color: #2C5D7C;");
+    title->setStyleSheet("font-size: 21px; font-weight: bold; color: #2C5D7C;");
     root->addWidget(title);
 
     QLineEdit *display = new QLineEdit(
@@ -101,7 +101,7 @@ void TouchDoubleSpinBox::openNumericKeypad() {
             .arg(maximum(), 0, 'f', decimals())
             .arg(suffix()));
     rangeHint->setAlignment(Qt::AlignCenter);
-    rangeHint->setStyleSheet("font-size: 13px; color: #607481;");
+    rangeHint->setStyleSheet("font-size: 14px; color: #607481;");
     root->addWidget(rangeHint);
 
     QGridLayout *keys = new QGridLayout();
@@ -200,7 +200,7 @@ void TouchDoubleSpinBox::openNumericKeypad() {
                 QString("请输入 %1 ～ %2 范围内的数值")
                     .arg(minimum(), 0, 'f', decimals())
                     .arg(maximum(), 0, 'f', decimals()));
-            rangeHint->setStyleSheet("font-size: 13px; color: #C0392B; font-weight: bold;");
+            rangeHint->setStyleSheet("font-size: 14px; color: #C0392B; font-weight: bold;");
             return;
         }
         setValue(entered);

@@ -195,23 +195,23 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
 
     window.setWindowTitle("CPC 纳米凝结核计数器总控面板");
     window.resize(1280, 720);
-    app.setFont(QFont("WenQuanYi Micro Hei", 10));
+    app.setFont(QFont("WenQuanYi Micro Hei", 11));
     app.setStyleSheet(
         "QMainWindow, QWidget { background-color: #EEF2F6; color: #263746; font-family: 'WenQuanYi Micro Hei'; }"
         "QFocusFrame { background: transparent; border: none; }"
         "QLabel { background: transparent; }"
         "QTabWidget::pane { border: 0; }"
-        "QTabBar::tab { background: #E5E8EC; color: #2c3e50; min-width: 108px; min-height: 42px; padding: 6px 16px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 16px; font-weight: bold; }"
+        "QTabBar::tab { background: #E5E8EC; color: #2c3e50; min-width: 108px; min-height: 42px; padding: 6px 16px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 17px; font-weight: bold; }"
         "QTabBar::tab:selected { background: #005bac; color: white; }"
         "QPushButton { min-height: 42px; border: 1px solid #CBD5DC; border-radius: 7px; "
-        "background-color: #FFFFFF; color: #34495E; font-size: 14px; font-weight: bold; "
+        "background-color: #FFFFFF; color: #34495E; font-size: 15px; font-weight: bold; "
         "padding: 0 12px; outline: none; }"
         "QPushButton:focus, QToolButton:focus { outline: none; }"
         "QPushButton:hover { background-color: #F4F8FB; border-color: #91A5B4; }"
         "QPushButton:pressed { background-color: #E6EDF2; }"
         "QPushButton:disabled { background-color: #E8ECEF; color: #98A3AB; border-color: #D8DEE3; }"
         "QDoubleSpinBox, QComboBox { min-height: 36px; background-color: #FFFFFF; color: #2C3E50; "
-        "border: 1px solid #C7D1D9; border-radius: 6px; padding: 2px 8px; font-size: 14px; }"
+        "border: 1px solid #C7D1D9; border-radius: 6px; padding: 2px 8px; font-size: 15px; }"
         "QDoubleSpinBox:hover, QComboBox:hover { border-color: #7F96A8; }"
         "QDoubleSpinBox:focus, QComboBox:focus { border: 2px solid #2E86C1; }"
         "QDoubleSpinBox:disabled, QComboBox:disabled { background-color: #E8ECEF; color: #929DA5; }"
@@ -229,9 +229,9 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         "QDialog { background-color: #FFFFFF; color: #2C3E50; }"
         "QMessageBox { background-color: #FFFFFF; }"
         "QMessageBox QLabel { background: transparent; color: #2C3E50; }"
-        "QMessageBox QLabel#qt_msgbox_label { font-size: 17px; min-width: 440px; max-width: 620px; padding: 4px; }"
+        "QMessageBox QLabel#qt_msgbox_label { font-size: 18px; min-width: 440px; max-width: 620px; padding: 4px; }"
         "QDialogButtonBox { background: transparent; }"
-        "QDialogButtonBox QPushButton { min-width: 96px; min-height: 38px; padding: 0 18px; background-color: #F2F5F7; color: #34495E; border: 1px solid #B8C4CE; border-radius: 6px; font-size: 15px; font-weight: bold; outline: none; }"
+        "QDialogButtonBox QPushButton { min-width: 96px; min-height: 38px; padding: 0 18px; background-color: #F2F5F7; color: #34495E; border: 1px solid #B8C4CE; border-radius: 6px; font-size: 16px; font-weight: bold; outline: none; }"
         "QDialogButtonBox QPushButton:hover { background-color: #E4EBF0; border-color: #8FA2B1; }"
         "QDialogButtonBox QPushButton:pressed { background-color: #D6E0E7; }"
         "QDialogButtonBox QPushButton:focus { outline: none; border: 1px solid #7F96A8; }"
@@ -264,13 +264,13 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         lblLogo->setStyleSheet("background: transparent; border: none;");
     } else {
         lblLogo->setText("北京航空航天大学");
-        lblLogo->setStyleSheet("color: #005bac; font-size: 20px; font-weight: bold;");
+        lblLogo->setStyleSheet("color: #005bac; font-size: 21px; font-weight: bold;");
     }
     lblLogo->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     headerLayout->addWidget(lblLogo);
 
-    QLabel *lblPlatformTitle = new QLabel(" | CPC主控平台");
-    lblPlatformTitle->setStyleSheet("color: #005bac; font-size: 22px; font-weight: bold; background: transparent; border: none;");
+    QLabel *lblPlatformTitle = new QLabel(" | CPC");
+    lblPlatformTitle->setStyleSheet("color: #005bac; font-size: 23px; font-weight: bold; background: transparent; border: none;");
     headerLayout->addWidget(lblPlatformTitle);
     headerLayout->addStretch();
 
@@ -286,14 +286,14 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     warmupIndicatorLayout->setSpacing(4);
     QLabel *warmupTitle = new QLabel("热机");
     warmupTitle->setStyleSheet(
-        "font-size: 16px; color: #2C3E50; font-weight: 800; background: transparent;");
-    ui.lblWarmupCountdown = new QLabel("自检");
-    ui.lblWarmupCountdown->setAlignment(Qt::AlignCenter);
-    ui.lblWarmupCountdown->setMinimumWidth(58);
-    ui.lblWarmupCountdown->setStyleSheet(
-        "font-size: 18px; font-weight: 800; color: #C45F00; background: transparent;");
+        "font-size: 17px; color: #2C3E50; font-weight: 800; background: transparent;");
+    ui.lblStartupState = new QLabel("自检");
+    ui.lblStartupState->setAlignment(Qt::AlignCenter);
+    ui.lblStartupState->setMinimumWidth(66);
+    ui.lblStartupState->setStyleSheet(
+        "font-size: 19px; font-weight: 800; color: #C45F00; background: transparent;");
     warmupIndicatorLayout->addWidget(warmupTitle);
-    warmupIndicatorLayout->addWidget(ui.lblWarmupCountdown);
+    warmupIndicatorLayout->addWidget(ui.lblStartupState);
     headerStatusLayout->addWidget(warmupIndicator);
     auto addHeaderStatusIndicator = [&](const QString& title, QLabel *&lamp) {
         QWidget *indicator = new QWidget();
@@ -302,7 +302,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         indicatorLayout->setContentsMargins(0, 0, 0, 0);
         indicatorLayout->setSpacing(4);
         QLabel *titleLabel = new QLabel(title);
-        titleLabel->setStyleSheet("font-size: 14px; color: #34495E; font-weight: bold; background: transparent;");
+        titleLabel->setStyleSheet("font-size: 15px; color: #34495E; font-weight: bold; background: transparent;");
         lamp = new QLabel();
         lamp->setFixedSize(20, 20);
         lamp->setStyleSheet("background-color: #D64541; border: 2px solid #A93226; border-radius: 10px;");
@@ -322,14 +322,14 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     pageSelector->setMaxVisibleItems(7);
     pageSelector->setToolTip("切换功能页面");
     pageSelector->setStyleSheet(
-        "QComboBox { background-color: #FFFFFF; color: #2C3E50; border: 1px solid #AEBBC6; border-radius: 7px; padding: 5px 38px 5px 13px; font-size: 15px; font-weight: bold; }"
+        "QComboBox { background-color: #FFFFFF; color: #2C3E50; border: 1px solid #AEBBC6; border-radius: 7px; padding: 5px 38px 5px 13px; font-size: 16px; font-weight: bold; }"
         "QComboBox:hover { border-color: #7F96A8; }"
         "QComboBox:on { border-color: #005BAC; }"
         "QComboBox:disabled { background-color: #EFF1F3; color: #9AA6AF; border-color: #CDD4DA; }"
         "QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 34px; background-color: #F5F7F9; border-left: 1px solid #D5DDE4; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }"
         "QComboBox::drop-down:hover { background-color: #E9EEF2; }"
         "QComboBox::down-arrow { image: url(:/ui/ui/dropdown_arrow.svg); width: 14px; height: 9px; }"
-        "QComboBox QAbstractItemView { background-color: #FFFFFF; color: #2C3E50; border: 1px solid #AEBBC6; border-radius: 7px; padding: 4px; outline: none; selection-background-color: #005BAC; selection-color: #FFFFFF; font-size: 15px; font-weight: bold; }"
+        "QComboBox QAbstractItemView { background-color: #FFFFFF; color: #2C3E50; border: 1px solid #AEBBC6; border-radius: 7px; padding: 4px; outline: none; selection-background-color: #005BAC; selection-color: #FFFFFF; font-size: 16px; font-weight: bold; }"
         "QComboBox QAbstractItemView::item { min-height: 34px; padding: 3px 10px; }"
     );
     headerLayout->addWidget(pageSelector);
@@ -358,12 +358,12 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     overviewLayout->setContentsMargins(4, 8, 4, 4);
     overviewLayout->setSpacing(8);
     ui.lblParticleConcentration = new QLabel("-- 个/ml");
-    ui.lblParticleConcentration->setStyleSheet("font-size: 42px; color: #0E8F78; font-weight: bold; font-family: 'WenQuanYi Micro Hei';");
+    ui.lblParticleConcentration->setStyleSheet("font-size: 43px; color: #0E8F78; font-weight: bold; font-family: 'WenQuanYi Micro Hei';");
     ui.lblParticleConcentration->setAlignment(Qt::AlignCenter);
     ui.lblStatus = new QLabel("状态: 待机（执行器关闭）");
     ui.lblStatus->setAlignment(Qt::AlignCenter);
     ui.lblStatus->setWordWrap(true);
-    ui.lblStatus->setStyleSheet("color: #E67E22; font-weight:bold; font-size: 14px;");
+    ui.lblStatus->setStyleSheet("color: #E67E22; font-weight:bold; font-size: 15px;");
     QGroupBox *particleConcentrationCard = createOverviewCard("颗粒数目浓度", ui.lblParticleConcentration, "#16A085");
 
     QGroupBox *systemCard = new QGroupBox("系统采集");
@@ -386,7 +386,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnSaveRaw->setStyleSheet(solidButtonStyle("#566573", "#3F4D55"));
     ui.lblCaptureState = new QLabel("采集: 未启动");
     ui.lblCaptureState->setAlignment(Qt::AlignCenter);
-    ui.lblCaptureState->setStyleSheet("font-size: 13px; font-weight: bold; color: #566573;");
+    ui.lblCaptureState->setStyleSheet("font-size: 14px; font-weight: bold; color: #566573;");
     systemLayout->addWidget(ui.lblStatus, 0, 0, 1, 2);
     systemLayout->addWidget(ui.lblCaptureState, 0, 2);
     systemLayout->addWidget(ui.btnAcqStart, 1, 0);
@@ -397,7 +397,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
 
     ui.lblCompactDeviceState = new QLabel("气泵: 关    流量: 0.3 L/min    压差 A0:初始化  A1:初始化  A2:初始化");
     ui.lblCompactDeviceState->setAlignment(Qt::AlignCenter);
-    ui.lblCompactDeviceState->setStyleSheet("font-size: 12px; color: #526471; background: #FFFFFF; border: 1px solid #D8E1E7; border-radius: 7px; padding: 5px 10px;");
+    ui.lblCompactDeviceState->setStyleSheet("font-size: 13px; color: #526471; background: #FFFFFF; border: 1px solid #D8E1E7; border-radius: 7px; padding: 5px 10px;");
     ui.lblCompactDeviceState->setMaximumHeight(28);
 
     ui.particleConcentrationPlot = new QCustomPlot();
@@ -413,10 +413,10 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     QHBoxLayout *particlePlotToolbar = new QHBoxLayout();
     particlePlotToolbar->setContentsMargins(0, 0, 0, 0);
     QLabel *particlePlotTitle = new QLabel("浓度趋势");
-    particlePlotTitle->setStyleSheet("font-size: 14px; color: #3C596B; font-weight: bold;");
+    particlePlotTitle->setStyleSheet("font-size: 15px; color: #3C596B; font-weight: bold;");
     ui.btnResetParticlePlot = new QPushButton("还原视图");
     ui.btnResetParticlePlot->setFixedSize(88, 28);
-    ui.btnResetParticlePlot->setStyleSheet("QPushButton { background-color: #F7FAFC; color: #3C596B; border: 1px solid #C8D4DC; border-radius: 5px; min-height: 24px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #EAF2F7; border-color: #8FA7B7; } QPushButton:pressed { background-color: #DDE8EF; }");
+    ui.btnResetParticlePlot->setStyleSheet("QPushButton { background-color: #F7FAFC; color: #3C596B; border: 1px solid #C8D4DC; border-radius: 5px; min-height: 24px; font-size: 13px; font-weight: bold; } QPushButton:hover { background-color: #EAF2F7; border-color: #8FA7B7; } QPushButton:pressed { background-color: #DDE8EF; }");
     particlePlotToolbar->addWidget(particlePlotTitle);
     particlePlotToolbar->addStretch();
     particlePlotToolbar->addWidget(ui.btnResetParticlePlot);
@@ -453,7 +453,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     QGroupBox *pidGroup = new QGroupBox("PID 参数调节");
     pidGroup->setStyleSheet(
         cardStyle("#8E44AD") +
-        "QGroupBox::title { font-size: 15px; font-weight: 700; letter-spacing: 1px; }");
+        "QGroupBox::title { font-size: 16px; font-weight: 700; letter-spacing: 1px; }");
     QGridLayout *pidLayout = new QGridLayout(pidGroup);
     pidLayout->setContentsMargins(14, 28, 14, 11);
     pidLayout->setHorizontalSpacing(8);
@@ -466,7 +466,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.cmbTempPidSegment->setMinimumHeight(38);
     ui.cmbTempPidSegment->setStyleSheet(
         "QComboBox { padding: 5px 9px; background: #FFFFFF; border: 1px solid #C7D1D9; "
-        "border-radius: 7px; color: #243B53; font-size: 14px; font-weight: 600; }"
+        "border-radius: 7px; color: #243B53; font-size: 15px; font-weight: 600; }"
         "QComboBox:hover { border-color: #9B59B6; background: #FCFAFD; }"
         "QComboBox:focus { border: 2px solid #8E44AD; }");
     ui.sbTempKp = new TouchDoubleSpinBox("设置比例系数 Kp");
@@ -475,7 +475,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     const QString pidSpinStyle =
         "QDoubleSpinBox { min-height: 36px; padding: 3px 7px; background: #F9FBFC; "
         "border: 1px solid #C7D1D9; border-radius: 7px; color: #243B53; "
-        "font-size: 15px; font-weight: 600; } "
+        "font-size: 16px; font-weight: 600; } "
         "QDoubleSpinBox:hover { border-color: #9B59B6; background: #FCFAFD; } "
         "QDoubleSpinBox:focus { border: 2px solid #8E44AD; background: #FFFFFF; }";
     ui.sbTempKp->setRange(0.0, 100.0);
@@ -494,18 +494,18 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnTempPidReset = new QPushButton("恢复推荐值");
     ui.btnTempPidApply->setStyleSheet(
         solidButtonStyle("#8E44AD", "#6C3483") +
-        "QPushButton { font-size: 14px; font-weight: 700; }");
+        "QPushButton { font-size: 15px; font-weight: 700; }");
     ui.btnTempPidReset->setStyleSheet(
         solidButtonStyle("#71858A", "#56696E") +
-        "QPushButton { font-size: 13px; font-weight: 600; }");
+        "QPushButton { font-size: 14px; font-weight: 600; }");
     ui.lblTempPidStatus = new QLabel("选择控制段后可查看和修改参数");
     ui.lblTempPidStatus->setStyleSheet(
-        "font-size: 13px; font-weight: 500; color: #634B6B; background: #F8F3FA; "
+        "font-size: 14px; font-weight: 500; color: #634B6B; background: #F8F3FA; "
         "border: 1px solid #E4D3EA; border-radius: 6px; padding: 5px 9px;");
     auto createPidCaption = [](const QString& symbol, const QString& description) {
         QLabel *label = new QLabel(
-            QString("<span style='font-size:16px; font-weight:700; color:#7D3C98;'>%1</span>"
-                    "&nbsp;&nbsp;<span style='font-size:12px; font-weight:500; "
+            QString("<span style='font-size:17px; font-weight:700; color:#7D3C98;'>%1</span>"
+                    "&nbsp;&nbsp;<span style='font-size:13px; font-weight:500; "
                     "color:#607481;'>%2</span>")
                 .arg(symbol, description));
         label->setTextFormat(Qt::RichText);
@@ -514,7 +514,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     };
     QLabel *pidSegmentCaption = new QLabel("控制回路");
     pidSegmentCaption->setStyleSheet(
-        "font-size: 14px; font-weight: 700; color: #34495E; padding: 0 1px 1px 1px;");
+        "font-size: 15px; font-weight: 700; color: #34495E; padding: 0 1px 1px 1px;");
     pidLayout->addWidget(pidSegmentCaption, 0, 0);
     pidLayout->addWidget(ui.cmbTempPidSegment, 1, 0);
     pidLayout->addWidget(createPidCaption("Kp", "比例系数"), 0, 1);
@@ -537,7 +537,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         "饱和段采用提前预测断热和接近目标限功率，以降低热惯性造成的超调。</span>");
     tempHint->setTextFormat(Qt::RichText);
     tempHint->setWordWrap(true);
-    tempHint->setStyleSheet("font-size: 13px; padding: 8px 12px; background: #EAF2F8; border: 1px solid #D4E6F1; border-radius: 7px;");
+    tempHint->setStyleSheet("font-size: 14px; padding: 8px 12px; background: #EAF2F8; border: 1px solid #D4E6F1; border-radius: 7px;");
     tempLayout->addWidget(condGroup, 0, 0);
     tempLayout->addWidget(satGroup, 0, 1);
     tempLayout->addWidget(opcGroup, 0, 2);
@@ -566,9 +566,9 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.sliderPump->setRange(0, 100);
     ui.sliderPump->setValue(100);
     ui.lblPumpValue = new QLabel("100 %");
-    ui.lblPumpValue->setStyleSheet("font-size: 18px; color: #27AE60; font-weight: bold;");
+    ui.lblPumpValue->setStyleSheet("font-size: 19px; color: #27AE60; font-weight: bold;");
     QLabel *pumpPowerLabel = new QLabel("抽气功率");
-    pumpPowerLabel->setStyleSheet("font-size: 15px; color: #566573;");
+    pumpPowerLabel->setStyleSheet("font-size: 16px; color: #566573;");
     pumpLayout->addWidget(pumpPowerLabel, 0, 0);
     pumpLayout->addWidget(ui.sliderPump, 0, 1);
     pumpLayout->addWidget(ui.lblPumpValue, 0, 2);
@@ -589,7 +589,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnBypassHighFlow->setCheckable(true);
     ui.btnBypassLowFlow->setChecked(true);
     const QString flowModeButtonStyle =
-        "QPushButton { min-height: 46px; padding: 5px 10px; font-size: 14px; "
+        "QPushButton { min-height: 46px; padding: 5px 10px; font-size: 15px; "
         "font-weight: bold; color: #3C596B; background: #F4F7F9; "
         "border: 1px solid #C8D5DC; border-radius: 8px; }"
         "QPushButton:hover { background: #E8F4F1; border-color: #6BB8A8; }"
@@ -604,7 +604,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.lblFlowModeState = new QLabel("当前：小流量 0.3 L/min");
     ui.lblFlowModeState->setAlignment(Qt::AlignCenter);
     ui.lblFlowModeState->setStyleSheet(
-        "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+        "font-size: 13px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
         "border: 1px solid #A3E4D7; border-radius: 6px; padding: 5px;");
     flowModeButtons->addWidget(ui.btnBypassLowFlow);
     flowModeButtons->addWidget(ui.btnBypassHighFlow);
@@ -617,7 +617,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     valveLayout->setContentsMargins(10, 24, 10, 8);
     valveLayout->setSpacing(8);
     QLabel *valveOpeningLabel = new QLabel("开度");
-    valveOpeningLabel->setStyleSheet("font-size: 15px; color: #566573;");
+    valveOpeningLabel->setStyleSheet("font-size: 16px; color: #566573;");
     ui.sbValveOpening = new TouchDoubleSpinBox("设置比例阀开度");
     ui.sbValveOpening->setRange(0.0, 100.0);
     ui.sbValveOpening->setDecimals(1);
@@ -625,9 +625,9 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.sbValveOpening->setSuffix(" %");
     ui.sbValveOpening->setValue(80.0);
     ui.sbValveOpening->setMinimumHeight(36);
-    ui.sbValveOpening->setStyleSheet("QDoubleSpinBox { padding: 5px; border: 1px solid #bdc3c7; border-radius: 5px; font-size: 16px; }");
+    ui.sbValveOpening->setStyleSheet("QDoubleSpinBox { padding: 5px; border: 1px solid #bdc3c7; border-radius: 5px; font-size: 17px; }");
     ui.lblValveCurrent = new QLabel("16.80 mA");
-    ui.lblValveCurrent->setStyleSheet("font-size: 17px; color: #2980B9; font-weight: bold;");
+    ui.lblValveCurrent->setStyleSheet("font-size: 18px; color: #2980B9; font-weight: bold;");
     ui.btnValveApply = new QPushButton("设置");
     ui.btnValveRead = new QPushButton("读取");
     ui.btnValveClose = new QPushButton("安全关闭");
@@ -636,7 +636,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnValveClose->setStyleSheet(solidButtonStyle("#C0392B", "#922B21"));
     ui.lblValveStatus = new QLabel("N4IOA01 · /dev/ttyAMA0 · 尚未通信");
     ui.lblValveStatus->setWordWrap(true);
-    ui.lblValveStatus->setStyleSheet("font-size: 13px; color: #566573;");
+    ui.lblValveStatus->setStyleSheet("font-size: 14px; color: #566573;");
     valveLayout->addWidget(valveOpeningLabel, 0, 0);
     valveLayout->addWidget(ui.sbValveOpening, 0, 1);
     valveLayout->addWidget(ui.lblValveCurrent, 0, 2);
@@ -686,12 +686,12 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         "未启动。请先启动气泵并确认所选压差通道正常。");
     ui.lblPressureControlStatus->setWordWrap(true);
     ui.lblPressureControlStatus->setStyleSheet(
-        "font-size: 12px; color: #526471; background: #F4F7F9; border: 1px solid #DCE4EA; "
+        "font-size: 13px; color: #526471; background: #F4F7F9; border: 1px solid #DCE4EA; "
         "border-radius: 6px; padding: 6px 9px;");
 
     auto createPressureControlLabel = [](const QString& text) {
         QLabel *label = new QLabel(text);
-        label->setStyleSheet("font-size: 12px; color: #607481; font-weight: bold;");
+        label->setStyleSheet("font-size: 13px; color: #607481; font-weight: bold;");
         return label;
     };
     pressureControlLayout->addWidget(createPressureControlLabel("反馈通道"), 0, 0, 1, 2);
@@ -716,7 +716,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     pressureLayout->setSpacing(8);
     QHBoxLayout *pressureToolbar = new QHBoxLayout();
     QLabel *pressureHardware = new QLabel("ADS1115 · I²C 0x48 · 三通道轮询");
-    pressureHardware->setStyleSheet("font-size: 12px; color: #71828E;");
+    pressureHardware->setStyleSheet("font-size: 13px; color: #71828E;");
     ui.btnPressureZero = new QPushButton("三路重新校零");
     ui.btnPressureZero->setFixedSize(132, 34);
     ui.btnPressureZero->setStyleSheet(solidButtonStyle("#8E44AD", "#6C3483"));
@@ -737,12 +737,12 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         cardLayout->setSpacing(4);
         QHBoxLayout *cardHeader = new QHBoxLayout();
         QLabel *nameLabel = new QLabel(name);
-        nameLabel->setStyleSheet("font-size: 14px; color: #5B2C6F; font-weight: bold;");
+        nameLabel->setStyleSheet("font-size: 15px; color: #5B2C6F; font-weight: bold;");
         ui.lblPressureStatus[channel] = new QLabel("初始化中");
         ui.lblPressureStatus[channel]->setAlignment(Qt::AlignCenter);
         ui.lblPressureStatus[channel]->setMinimumWidth(62);
         ui.lblPressureStatus[channel]->setStyleSheet(
-            "font-size: 11px; color: #607481; font-weight: bold; background: #EDF1F3; "
+            "font-size: 12px; color: #607481; font-weight: bold; background: #EDF1F3; "
             "border: 1px solid #D5DDE2; border-radius: 10px; padding: 3px 8px;");
         cardHeader->addWidget(nameLabel);
         cardHeader->addStretch();
@@ -750,10 +750,10 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         ui.lblPressureValue[channel] = new QLabel(initialValue);
         ui.lblPressureValue[channel]->setAlignment(Qt::AlignCenter);
         ui.lblPressureValue[channel]->setStyleSheet(
-            "font-size: 25px; color: #8E44AD; font-weight: bold; font-family: 'WenQuanYi Micro Hei';");
+            "font-size: 26px; color: #8E44AD; font-weight: bold; font-family: 'WenQuanYi Micro Hei';");
         ui.lblPressureDetails[channel] = new QLabel("-- V · -- %FS");
         ui.lblPressureDetails[channel]->setAlignment(Qt::AlignCenter);
-        ui.lblPressureDetails[channel]->setStyleSheet("font-size: 11px; color: #607481;");
+        ui.lblPressureDetails[channel]->setStyleSheet("font-size: 12px; color: #607481;");
         cardLayout->addLayout(cardHeader);
         cardLayout->addWidget(ui.lblPressureValue[channel], 1);
         cardLayout->addWidget(ui.lblPressureDetails[channel]);
@@ -805,14 +805,14 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     ui.btnDrain->setFixedWidth(150);
     ui.btnDrain->setStyleSheet(solidButtonStyle("#C0392B", "#922B21"));
     QLabel *liquidStateTitle = new QLabel("当前液位状态");
-    liquidStateTitle->setStyleSheet("font-size: 14px; color: #6E5A2F; font-weight: bold;");
+    liquidStateTitle->setStyleSheet("font-size: 15px; color: #6E5A2F; font-weight: bold;");
     ui.lblLiquidState = new QLabel("异常");
     ui.lblLiquidState->setAlignment(Qt::AlignCenter);
     ui.lblLiquidState->setMinimumWidth(82);
-    ui.lblLiquidState->setStyleSheet("font-size: 14px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
+    ui.lblLiquidState->setStyleSheet("font-size: 15px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
     ui.liquidLog = new QTextBrowser();
     ui.liquidLog->setMinimumHeight(330);
-    ui.liquidLog->setStyleSheet("font-size: 12px; color: #405462; background-color: #F8FAFB; border: 1px solid #D7E0E6; border-radius: 8px; padding: 8px;");
+    ui.liquidLog->setStyleSheet("font-size: 13px; color: #405462; background-color: #F8FAFB; border: 1px solid #D7E0E6; border-radius: 8px; padding: 8px;");
     liquidButtonLayout->addWidget(ui.btnLiquidStart);
     liquidButtonLayout->addWidget(ui.btnLiquidStop);
     liquidButtonLayout->addWidget(liquidStateTitle);
@@ -820,7 +820,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     liquidButtonLayout->addStretch();
     liquidButtonLayout->addWidget(ui.btnDrain);
     QLabel *liquidLogTitle = new QLabel("运行记录");
-    liquidLogTitle->setStyleSheet("font-size: 13px; color: #526471; font-weight: bold; padding: 2px 2px 0 2px;");
+    liquidLogTitle->setStyleSheet("font-size: 14px; color: #526471; font-weight: bold; padding: 2px 2px 0 2px;");
     liquidLayout->addWidget(liquidStatusBar);
     liquidLayout->addWidget(liquidLogTitle);
     liquidLayout->addWidget(ui.liquidLog);
@@ -834,7 +834,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     QLabel *algorithmIntro = new QLabel("调整 OPC 脉冲识别阈值。修改后立即生效，请结合原始信号页面观察效果。");
     algorithmIntro->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     algorithmIntro->setWordWrap(true);
-    algorithmIntro->setStyleSheet("font-size: 13px; color: #526471; padding: 2px 0;");
+    algorithmIntro->setStyleSheet("font-size: 14px; color: #526471; padding: 2px 0;");
     QGroupBox *algorithmGroup = new QGroupBox("OPC 算法设置");
     algorithmGroup->setStyleSheet(cardStyle("#2E86C1"));
     QGridLayout *algorithmGrid = new QGridLayout(algorithmGroup);
@@ -864,7 +864,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     sbCutoffInterval->setValue(opcParams.windowMs);
 
     QLabel *lblAlgorithmSummary = new QLabel();
-    lblAlgorithmSummary->setStyleSheet("font-size: 14px; color: #2C5D7C; font-weight: bold; padding: 10px 12px; background: #F0F7FB; border: 1px solid #D4E6F1; border-radius: 7px;");
+    lblAlgorithmSummary->setStyleSheet("font-size: 15px; color: #2C5D7C; font-weight: bold; padding: 10px 12px; background: #F0F7FB; border: 1px solid #D4E6F1; border-radius: 7px;");
     lblAlgorithmSummary->setWordWrap(true);
 
     auto createAlgorithmControl = [&](const QString& title,
@@ -878,12 +878,12 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
         layout->setContentsMargins(12, 10, 12, 12);
         layout->setSpacing(5);
         QLabel *label = new QLabel(title);
-        label->setStyleSheet("font-size: 15px; color: #2C5D7C; font-weight: bold;");
+        label->setStyleSheet("font-size: 16px; color: #2C5D7C; font-weight: bold;");
         QLabel *hint = new QLabel(description);
         hint->setWordWrap(true);
-        hint->setStyleSheet("font-size: 12px; color: #71828E;");
+        hint->setStyleSheet("font-size: 13px; color: #71828E;");
         spinBox->setMinimumHeight(40);
-        spinBox->setStyleSheet("QDoubleSpinBox { padding: 4px 8px; background: #F9FBFC; border: 1px solid #C7D1D9; border-radius: 6px; font-size: 15px; } QDoubleSpinBox:focus { border: 2px solid #2E86C1; background: #FFFFFF; }");
+        spinBox->setStyleSheet("QDoubleSpinBox { padding: 4px 8px; background: #F9FBFC; border: 1px solid #C7D1D9; border-radius: 6px; font-size: 16px; } QDoubleSpinBox:focus { border: 2px solid #2E86C1; background: #FFFFFF; }");
         layout->addWidget(label);
         layout->addWidget(hint);
         layout->addSpacing(3);
@@ -938,7 +938,7 @@ MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& 
     opcControlLayout->setSpacing(8);
     QLabel *lblProcess = new QLabel("空气入口  →  饱和段  →  冷凝段  →  OPC 光腔");
     lblProcess->setAlignment(Qt::AlignCenter);
-    lblProcess->setStyleSheet("color: #68457A; font-size: 14px; font-weight: bold; background: #F7F0FA; border: 1px solid #E4D3EB; border-radius: 7px; padding: 8px;");
+    lblProcess->setStyleSheet("color: #68457A; font-size: 15px; font-weight: bold; background: #F7F0FA; border: 1px solid #E4D3EB; border-radius: 7px; padding: 8px;");
     ui.opcPlot = new QCustomPlot();
     ui.opcPlot->setMinimumHeight(470);
     setupOpcPlot(ui.opcPlot);

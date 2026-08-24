@@ -35,13 +35,13 @@ QGroupBox* createTempGroup(
     btnStart->setMinimumHeight(44);
     btnStop->setMinimumHeight(44);
     btnStart->setStyleSheet(QString(
-        "QPushButton { background-color: %1; color: white; border: none; border-radius: 7px; font-size: 14px; font-weight: bold; }"
+        "QPushButton { background-color: %1; color: white; border: none; border-radius: 7px; font-size: 15px; font-weight: bold; }"
         "QPushButton:hover { border: 2px solid #34495E; }"
         "QPushButton:pressed { border: 2px solid #263746; padding-top: 2px; }"
         "QPushButton:disabled { background-color: #D8DEE3; color: #8A969F; }")
         .arg(colorHex));
     btnStop->setStyleSheet(
-        "QPushButton { background-color: #7F8C8D; color: white; border: none; border-radius: 7px; font-size: 14px; font-weight: bold; }"
+        "QPushButton { background-color: #7F8C8D; color: white; border: none; border-radius: 7px; font-size: 15px; font-weight: bold; }"
         "QPushButton:hover { background-color: #626F70; }"
         "QPushButton:pressed { background-color: #4D5859; padding-top: 2px; }"
         "QPushButton:disabled { background-color: #D8DEE3; color: #8A969F; }");
@@ -54,16 +54,16 @@ QGroupBox* createTempGroup(
     spinBox->setSingleStep(0.5);
     spinBox->setMinimumHeight(38);
     spinBox->setSuffix(" ℃");
-    spinBox->setStyleSheet("QDoubleSpinBox { padding: 4px 8px; background: #F9FBFC; border: 1px solid #C7D1D9; border-radius: 6px; font-size: 15px; } QDoubleSpinBox:focus { border: 2px solid #2E86C1; background: #FFFFFF; }");
+    spinBox->setStyleSheet("QDoubleSpinBox { padding: 4px 8px; background: #F9FBFC; border: 1px solid #C7D1D9; border-radius: 6px; font-size: 16px; } QDoubleSpinBox:focus { border: 2px solid #2E86C1; background: #FFFFFF; }");
 
     QLabel *targetLabel = new QLabel("目标温度");
-    targetLabel->setStyleSheet("font-size: 13px; color: #566573;");
+    targetLabel->setStyleSheet("font-size: 14px; color: #566573;");
     lblTemp = new QLabel("当前: -- ℃");
     lblTemp->setAlignment(Qt::AlignCenter);
-    lblTemp->setStyleSheet(QString("font-size: 23px; font-weight: bold; color: %1; background: #F7FAFC; border-radius: 7px; padding: 7px;").arg(colorHex));
+    lblTemp->setStyleSheet(QString("font-size: 24px; font-weight: bold; color: %1; background: #F7FAFC; border-radius: 7px; padding: 7px;").arg(colorHex));
     lblPwm = new QLabel("功率: -- %");
     lblPwm->setAlignment(Qt::AlignCenter);
-    lblPwm->setStyleSheet("font-size: 13px; color: #667884;");
+    lblPwm->setStyleSheet("font-size: 14px; color: #667884;");
 
     layout->addLayout(btnLayout);
     layout->addWidget(targetLabel);
@@ -77,7 +77,7 @@ QLabel* createOverviewValue(const QString& text, const QString& colorHex) {
     QLabel *label = new QLabel(text);
     label->setAlignment(Qt::AlignCenter);
     label->setWordWrap(true);
-    label->setStyleSheet(QString("font-size: 20px; font-weight: bold; color: %1;").arg(colorHex));
+    label->setStyleSheet(QString("font-size: 21px; font-weight: bold; color: %1;").arg(colorHex));
     return label;
 }
 

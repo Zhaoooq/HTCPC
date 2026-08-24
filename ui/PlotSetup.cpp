@@ -34,10 +34,10 @@ void setupOpcPlot(QCustomPlot *plot) {
     plot->yAxis->setLabel("OPC 电压 (V)");
     plot->xAxis->setRange(0, 0.05);
     plot->yAxis->setRange(-0.5, 5.5);
-    plot->xAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 10));
-    plot->yAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 10));
-    plot->xAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 11));
-    plot->yAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->xAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->yAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->xAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 12));
+    plot->yAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 12));
     plot->setNotAntialiasedElements(QCP::aeAll);
     plot->setOpenGl(false);
 }
@@ -68,10 +68,10 @@ void setupParticleConcentrationPlot(QCustomPlot *plot) {
     plot->xAxis->grid()->setPen(QPen(QColor("#E3E9ED"), 1, Qt::DashLine));
     plot->yAxis->grid()->setPen(QPen(QColor("#E3E9ED"), 1, Qt::DashLine));
     plot->setStyleSheet("border: none; background: #FFFFFF;");
-    plot->xAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 10));
-    plot->yAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 10));
-    plot->xAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 11));
-    plot->yAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->xAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->yAxis->setTickLabelFont(QFont("WenQuanYi Micro Hei", 11));
+    plot->xAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 12));
+    plot->yAxis->setLabelFont(QFont("WenQuanYi Micro Hei", 12));
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
     plot->axisRect()->setRangeDrag(Qt::Horizontal);
     plot->axisRect()->setRangeDragAxes(plot->xAxis, nullptr);

@@ -58,8 +58,6 @@ enum class StartupPhase {
     Ready
 };
 
-constexpr qint64 WARMUP_DURATION_MS = 10 * 60 * 1000;
-
 struct PidTunings {
     double kp;
     double ki;
@@ -68,7 +66,8 @@ struct PidTunings {
 
 constexpr PidTunings COND_PID_RECOMMENDED = {20.0, 1.5, 40.0};
 constexpr PidTunings SAT_PID_RECOMMENDED = {8.0, 0.10, 90.0};
-constexpr PidTunings OPC_PID_RECOMMENDED = {10.0, 0.20, 60.0};
+constexpr PidTunings OPC_PID_RECOMMENDED = {6.0, 0.05, 100.0};
+constexpr double OPC_OVERTEMP_MARGIN_C = 5.0;
 
 volatile std::sig_atomic_t pendingTerminationSignal = 0;
 
@@ -96,14 +95,6 @@ void appendSafetyShutdownLog(const QString& trigger, const QStringList& results)
     for (const QString& result : results) stream << "  " << result << "\n";
     stream << "\n";
     stream.flush();
-}
-
-QString formatCountdown(int remainingSeconds) {
-    const int minutes = remainingSeconds / 60;
-    const int seconds = remainingSeconds % 60;
-    return QString("%1:%2")
-        .arg(minutes, 2, 10, QLatin1Char('0'))
-        .arg(seconds, 2, 10, QLatin1Char('0'));
 }
 
 } // namespace
@@ -169,6 +160,13 @@ int main(int argc, char *argv[]) {
     sat_pid.full_power_error = 6.0;
     sat_pid.approach_max_output = 40.0;
     opc_pid.setTunings(opcStored.kp, opcStored.ki, opcStored.kd);
+    // The OPC uses a 30 W heater with a long sensor/thermal delay.  Limit the
+    // injected heat and coast much earlier than the saturation heater so the
+    // stored heat does not carry the chamber far beyond its setpoint.
+    opc_pid.prediction_seconds = 90.0;
+    opc_pid.full_power_error = 8.0;
+    opc_pid.max_output = 50.0;
+    opc_pid.approach_max_output = 20.0;
     ActuatorState actuatorState;
     bool &is_cond_running = actuatorState.condRunning;
     bool &is_sat_running = actuatorState.satRunning;
@@ -189,9 +187,8 @@ int main(int argc, char *argv[]) {
     bool shutdownRequested = false;
     QString shutdownTrigger = QStringLiteral("正常退出");
     StartupPhase startupPhase = StartupPhase::SelfCheck;
-    QElapsedTimer warmupElapsed;
-    int warmupRemainingSeconds = static_cast<int>(WARMUP_DURATION_MS / 1000);
-    bool liquidLevelNormal = false;
+    bool warmupInitialized = false;
+    bool temperatureWarmupReady = false;
     bool pressureZeroing = true;
     QString startupBlockReason;
     std::function<void()> updateAcqUi;
@@ -252,20 +249,20 @@ int main(int argc, char *argv[]) {
         if (startupPhase == StartupPhase::SelfCheck) {
             if (startupBlockReason.isEmpty()) {
                 ui.lblCaptureState->setText("采集: 快速自检");
-                ui.lblStatus->setText("状态: 正在确认液位和气泵安全状态");
+                ui.lblStatus->setText("状态: 正在确认气泵安全状态");
             } else {
                 ui.lblCaptureState->setText("采集: 启动受阻");
                 ui.lblStatus->setText(QString("状态: 启动受阻：%1").arg(startupBlockReason));
             }
         } else if (startupPhase == StartupPhase::WarmingUp) {
-            ui.lblCaptureState->setText("采集: 热机锁定");
-            ui.lblStatus->setText("状态: 三段温控热机中，气泵保持关闭");
+            ui.lblCaptureState->setText("采集: 等待系统就绪");
+            ui.lblStatus->setText("状态: 热机中；除开始采集外可手动操作");
         } else {
             ui.lblCaptureState->setText(
                 is_acquiring ? "采集: 运行中" : (isStopping ? "采集: 正在停止" : "采集: 已停止"));
             ui.lblStatus->setText(
                 is_acquiring ? "状态: 正在采集 OPC 原始信号（气泵 100%）"
-                             : (isStopping ? "状态: 正在停止数据采集..." : "状态: 热机完成，可开始采集"));
+                             : (isStopping ? "状态: 正在停止数据采集..." : "状态: 系统已就绪，可开始采集"));
         }
     };
 
@@ -346,7 +343,11 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(ui.btnAcqStart, &QPushButton::clicked, [&]() {
         if (startupPhase != StartupPhase::Ready) {
-            QMessageBox::information(&window, "暂不能采集", "请等待启动自检和 10 分钟热机完成。");
+            QMessageBox::information(
+                &window,
+                "暂不能采集",
+                "请等待三段温度达到目标值 ±1 ℃，并完成压力校零。\n"
+                "热机期间其余功能仍可手动操作。");
             return;
         }
         if (daqWorker->isRunning()) return;
@@ -521,8 +522,8 @@ int main(int argc, char *argv[]) {
         ui.lblLiquidState->setText(state);
         const bool normal = state == QStringLiteral("正常");
         ui.lblLiquidState->setStyleSheet(normal
-            ? "font-size: 14px; color: #187A5A; font-weight: bold; background: #E8F8F5; border: 1px solid #A3E4D7; border-radius: 12px; padding: 4px 12px;"
-            : "font-size: 14px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
+            ? "font-size: 15px; color: #187A5A; font-weight: bold; background: #E8F8F5; border: 1px solid #A3E4D7; border-radius: 12px; padding: 4px 12px;"
+            : "font-size: 15px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
         setTrafficLightState(ui.lblOverviewLiquidLamp, normal);
     };
 
@@ -563,10 +564,10 @@ int main(int argc, char *argv[]) {
     };
 
     refreshPumpControls = [&]() {
-        const bool unlocked = startupPhase == StartupPhase::Ready && !pressureZeroing;
-        ui.btnPumpStart->setEnabled(unlocked && pumpReady && !is_pump_running);
-        ui.btnPumpStop->setEnabled(unlocked && pumpReady && is_pump_running);
-        ui.sliderPump->setEnabled(unlocked && pumpReady);
+        const bool manualPumpAllowed = !pressureZeroing;
+        ui.btnPumpStart->setEnabled(manualPumpAllowed && pumpReady && !is_pump_running);
+        ui.btnPumpStop->setEnabled(manualPumpAllowed && pumpReady && is_pump_running);
+        ui.sliderPump->setEnabled(manualPumpAllowed && pumpReady);
     };
     stopPumpSafely = [&]() {
         const bool stopped = vacuum_pump.set_duty_cycle(0.0);
@@ -576,8 +577,8 @@ int main(int argc, char *argv[]) {
         refreshPumpState();
     };
     startPumpAtFullPower = [&](QString *error) {
-        if (startupPhase != StartupPhase::Ready || !pumpReady || pressureZeroing) {
-            if (error) *error = "气泵尚未就绪或仍处于启动锁定状态";
+        if (!pumpReady || pressureZeroing) {
+            if (error) *error = "气泵尚未就绪或压力传感器仍在校零";
             return false;
         }
         ui.sliderPump->setValue(100);
@@ -599,6 +600,16 @@ int main(int argc, char *argv[]) {
 
     LiquidControlSystem *liquidSystem = nullptr;
     bool liquidAlertShown = false;
+    bool startupLiquidWarningShown = false;
+    auto showStartupLiquidWarning = [&](const QString& detail) {
+        if (startupLiquidWarningShown) return;
+        startupLiquidWarningShown = true;
+        QMessageBox::warning(
+            &window,
+            "启动液位提示",
+            QString("%1\n\n该提示不会阻止系统继续启动，请确认液位和补液装置状态。")
+                .arg(detail));
+    };
     if (gpio_handle >= 0) {
         LiquidControlSystem *candidate = new LiquidControlSystem(gpio_handle,
                                                                  PinMap::PIN_LEVEL_SENSOR,
@@ -610,12 +621,16 @@ int main(int argc, char *argv[]) {
             ui.lblStatus->setText("状态: 液位控制器不可用");
             setLiquidUiState("异常");
             appendLiquidLog(candidate->errorString());
+            showStartupLiquidWarning(candidate->errorString());
             delete candidate;
         }
     } else {
         ui.lblStatus->setText("状态: GPIO 控制器不可用");
         setLiquidUiState("异常");
-        appendLiquidLog(QString("无法打开 gpiochip %1，GPIO 执行器控制已禁用。").arg(PinMap::GPIO_CHIP));
+        const QString gpioError =
+            QString("无法打开 gpiochip %1，GPIO 执行器控制已禁用。").arg(PinMap::GPIO_CHIP);
+        appendLiquidLog(gpioError);
+        showStartupLiquidWarning(gpioError);
     }
 
     if (liquidSystem) {
@@ -623,19 +638,18 @@ int main(int argc, char *argv[]) {
             const QString state = liquidUiStateFromMessage(msg);
             if (!state.isEmpty()) {
                 setLiquidUiState(state);
-                liquidLevelNormal = state == QStringLiteral("正常");
             }
             if (msg.contains("液位正常") || msg.contains("正常满液")) {
                 liquidAlertShown = false;
             }
             appendLiquidLog(msg);
-            evaluateStartup();
+            if (startupPhase == StartupPhase::SelfCheck && msg.contains("缺液")) {
+                showStartupLiquidWarning("开机检测到液位异常（缺液）。");
+            }
         });
         QObject::connect(liquidSystem, &LiquidControlSystem::alertMessage, [&](const QString& alert) {
-            liquidLevelNormal = false;
             setLiquidUiState("异常");
             appendLiquidLog(alert);
-            evaluateStartup();
             if (liquidAlertShown) return;
             liquidAlertShown = true;
             QMessageBox::critical(&window, "液位报警", alert);
@@ -697,7 +711,7 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 "零点校准期间请保持气泵关闭，且 H/L 两侧等压。");
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 11px; color: #B95E00; font-weight: bold; background: #FEF5E7; "
+                "font-size: 12px; color: #B95E00; font-weight: bold; background: #FEF5E7; "
                 "border: 1px solid #F5CBA7; border-radius: 10px; padding: 3px 8px;");
             compactPressureStates[channel] = QString("校零%1%").arg(percent);
         }
@@ -718,7 +732,7 @@ int main(int argc, char *argv[]) {
                 .arg(zeroVoltage, 0, 'f', 6)
                 .arg(uncorrectedPressurePa, 0, 'f', 1));
         ui.lblPressureStatus[channel]->setStyleSheet(
-            "font-size: 11px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+            "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
             "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
         ui.btnPressureZero->setEnabled(true);
         ui.btnPressureControlStart->setEnabled(true);
@@ -754,13 +768,13 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 QString("/dev/i2c-1 · 地址 0x48 · A%1 · ADS 128 SPS 轮询").arg(channel));
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 11px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+                "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
                 "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
         } else {
             ui.lblPressureStatus[channel]->setText("警告");
             ui.lblPressureStatus[channel]->setToolTip(warning);
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 11px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
                 "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
         }
         compactPressureStates[channel] = pressureText;
@@ -777,7 +791,7 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 QString("ADS1115 通信错误：%1；请检查 I2C 接线并运行 i2cdetect -y 1").arg(error));
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 11px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
                 "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
             compactPressureStates[channel] = "不可用";
         }
@@ -811,7 +825,7 @@ int main(int argc, char *argv[]) {
         refreshPumpState();
     });
     QObject::connect(ui.btnPumpStart, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready || pressureZeroing || !pumpReady) return;
+        if (pressureZeroing || !pumpReady) return;
         if (!vacuum_pump.set_duty_cycle(pump_current_power)) {
             pumpReady = vacuum_pump.isReady();
             is_pump_running = false;
@@ -831,7 +845,7 @@ int main(int argc, char *argv[]) {
     auto setValveStatus = [&](const QString& text, bool error) {
         ui.lblValveStatus->setText(text);
         ui.lblValveStatus->setStyleSheet(
-            QString("font-size: 13px; font-weight: bold; color: %1;")
+            QString("font-size: 14px; font-weight: bold; color: %1;")
                 .arg(error ? "#C0392B" : "#187A5A"));
     };
     auto showValveError = [&](const QString& operation, const QString& error) {
@@ -899,7 +913,7 @@ int main(int argc, char *argv[]) {
         if (!closeError.isEmpty()) status += QString("；安全关闭失败：%1").arg(closeError);
         ui.lblPressureControlStatus->setText(status);
         ui.lblPressureControlStatus->setStyleSheet(
-            "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+            "font-size: 13px; color: #A93226; font-weight: bold; background: #FDEDEC; "
             "border: 1px solid #F5B7B1; border-radius: 6px; padding: 6px 9px;");
         if (showWarning) {
             QMessageBox::warning(&window, "压差闭环已停止", status);
@@ -966,7 +980,7 @@ int main(int argc, char *argv[]) {
                          : QString("%1 Pa").arg(targetPressurePa(), 0, 'f', 1))
                 .arg(initialOpening, 0, 'f', 1));
         ui.lblPressureControlStatus->setStyleSheet(
-            "font-size: 12px; color: #117A65; font-weight: bold; background: #E8F8F5; "
+            "font-size: 13px; color: #117A65; font-weight: bold; background: #E8F8F5; "
             "border: 1px solid #A3E4D7; border-radius: 6px; padding: 6px 9px;");
     });
 
@@ -1141,7 +1155,7 @@ int main(int argc, char *argv[]) {
         ui.btnLiquidStop->setEnabled(false);
     });
     QObject::connect(ui.btnDrain, &QPushButton::pressed, [&]() {
-        if (startupPhase == StartupPhase::Ready && liquidSystem) liquidSystem->startManualDrain();
+        if (liquidSystem) liquidSystem->startManualDrain();
     });
     QObject::connect(ui.btnDrain, &QPushButton::released, [&]() {
         if (liquidSystem) liquidSystem->stopManualDrain();
@@ -1150,25 +1164,19 @@ int main(int argc, char *argv[]) {
     bool condTemperatureValid = false;
     bool satTemperatureValid = false;
     refreshTemperatureControls = [&]() {
-        const bool manualControl = startupPhase == StartupPhase::Ready;
         ui.btnCondStart->setEnabled(
-            manualControl && peltier_cond.isReady() && condTemperatureValid && !is_cond_running);
-        ui.btnCondStop->setEnabled(manualControl && is_cond_running);
+            peltier_cond.isReady() && condTemperatureValid && !is_cond_running);
+        ui.btnCondStop->setEnabled(is_cond_running);
         ui.btnSatStart->setEnabled(
-            manualControl && heater_sat.isReady() && satTemperatureValid && !is_sat_running);
-        ui.btnSatStop->setEnabled(manualControl && is_sat_running);
+            heater_sat.isReady() && satTemperatureValid && !is_sat_running);
+        ui.btnSatStop->setEnabled(is_sat_running);
         ui.btnOpcStart->setEnabled(
-            manualControl && opcHeaterReady && opcTemperatureValid && !is_opc_heater_running);
-        ui.btnOpcStop->setEnabled(manualControl && is_opc_heater_running);
+            opcHeaterReady && opcTemperatureValid && !is_opc_heater_running);
+        ui.btnOpcStop->setEnabled(is_opc_heater_running);
     };
 
     auto startupFailures = [&]() {
         QStringList failures;
-        if (!liquidSystem) {
-            failures << "液位控制器不可用";
-        } else if (!liquidLevelNormal) {
-            failures << "等待液位正常";
-        }
         if (!pumpReady) {
             const QString pumpError = QString::fromStdString(vacuum_pump.errorString());
             failures << (pumpError.isEmpty()
@@ -1179,41 +1187,26 @@ int main(int argc, char *argv[]) {
     };
 
     evaluateStartup = [&]() {
-        if (startupPhase == StartupPhase::Ready) return;
-        if (startupPhase == StartupPhase::SelfCheck) stopPumpSafely();
+        if (!warmupInitialized && startupPhase == StartupPhase::SelfCheck) stopPumpSafely();
 
         const QStringList failures = startupFailures();
         if (!failures.isEmpty()) {
             startupBlockReason = failures.join("；");
-            if (startupPhase == StartupPhase::WarmingUp) {
-                peltier_cond.set_duty_cycle(0.0);
-                heater_sat.set_duty_cycle(0.0);
-                opc_heater.set_duty_cycle(0.0);
-                is_cond_running = false;
-                is_sat_running = false;
-                is_opc_heater_running = false;
-                cond_pid.reset();
-                sat_pid.reset();
-                opc_pid.reset();
-                warmupElapsed.invalidate();
-                warmupRemainingSeconds = static_cast<int>(WARMUP_DURATION_MS / 1000);
-                startupPhase = StartupPhase::SelfCheck;
-            }
-            stopPumpSafely();
-            ui.lblWarmupCountdown->setText(
-                failures.first().contains("液位") ? "液位异常" : "气泵异常");
-            ui.lblWarmupCountdown->setStyleSheet(
-                "font-size: 18px; font-weight: 800; color: #A93226; background: transparent;");
-            ui.lblWarmupCountdown->setToolTip(
-                QString("倒计时开始前仍需通过：\n• %1").arg(failures.join("\n• ")));
+            startupPhase = StartupPhase::SelfCheck;
+            ui.lblStartupState->setText("未就绪");
+            ui.lblStartupState->setStyleSheet(
+                "font-size: 19px; font-weight: 800; color: #A93226; background: transparent;");
+            ui.lblStartupState->setToolTip(
+                QString("系统尚未就绪：\n• %1\n除开始采集外，可用功能仍可手动操作。")
+                    .arg(failures.join("\n• ")));
             refreshTemperatureControls();
             refreshPumpControls();
-            ui.btnDrain->setEnabled(false);
+            ui.btnDrain->setEnabled(liquidSystem != nullptr);
             updateAcqUi();
             return;
         }
 
-        if (startupPhase == StartupPhase::SelfCheck) {
+        if (!warmupInitialized) {
             startupBlockReason.clear();
             cond_pid.reset();
             sat_pid.reset();
@@ -1221,29 +1214,31 @@ int main(int argc, char *argv[]) {
             is_cond_running = true;
             is_sat_running = true;
             is_opc_heater_running = true;
-            startupPhase = StartupPhase::WarmingUp;
-            warmupRemainingSeconds = static_cast<int>(WARMUP_DURATION_MS / 1000);
-            warmupElapsed.start();
+            warmupInitialized = true;
         }
 
-        const qint64 remainingMs = std::max<qint64>(0, WARMUP_DURATION_MS - warmupElapsed.elapsed());
-        warmupRemainingSeconds = static_cast<int>((remainingMs + 999) / 1000);
-        if (remainingMs == 0) {
+        startupBlockReason.clear();
+        const bool systemReady = temperatureWarmupReady && !pressureZeroing;
+        if (systemReady) {
             startupPhase = StartupPhase::Ready;
-            ui.lblWarmupCountdown->setText("完成");
-            ui.lblWarmupCountdown->setStyleSheet(
-                "font-size: 18px; font-weight: 800; color: #187A5A; background: transparent;");
-            ui.lblWarmupCountdown->setToolTip("启动自检和 10 分钟热机均已完成，可以开始采集。");
+            ui.lblStartupState->setText("已就绪");
+            ui.lblStartupState->setStyleSheet(
+                "font-size: 19px; font-weight: 800; color: #187A5A; background: transparent;");
+            ui.lblStartupState->setToolTip(
+                "三段温度均达到目标值 ±1 ℃，压力校零已完成，可以开始采集。");
         } else {
-            ui.lblWarmupCountdown->setText(formatCountdown(warmupRemainingSeconds));
-            ui.lblWarmupCountdown->setStyleSheet(
-                "font-size: 18px; font-weight: 800; color: #C45F00; background: transparent;");
-            ui.lblWarmupCountdown->setToolTip(
-                "三段温控已自动开启；倒计时结束前禁止采集和启动气泵。");
+            startupPhase = StartupPhase::WarmingUp;
+            ui.lblStartupState->setText("热机中");
+            ui.lblStartupState->setStyleSheet(
+                "font-size: 19px; font-weight: 800; color: #C45F00; background: transparent;");
+            ui.lblStartupState->setToolTip(
+                pressureZeroing
+                    ? "三段温控正在热机，压力传感器正在校零；仅开始采集不可用。"
+                    : "等待三段温度均达到目标值 ±1 ℃；仅开始采集不可用。");
         }
         refreshTemperatureControls();
         refreshPumpControls();
-        ui.btnDrain->setEnabled(startupPhase == StartupPhase::Ready && liquidSystem);
+        ui.btnDrain->setEnabled(liquidSystem != nullptr);
         updateAcqUi();
     };
     QTimer::singleShot(0, &window, [&]() { evaluateStartup(); });
@@ -1251,14 +1246,20 @@ int main(int argc, char *argv[]) {
     QObject::connect(ui.sbCond, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double val) {
         cond_pid.target = val;
         cond_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
     });
     QObject::connect(ui.sbSat, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double val) {
         sat_pid.target = val;
         sat_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
     });
     QObject::connect(ui.sbOpc, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double val) {
         opc_pid.target = val;
         opc_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
     });
 
     auto recommendedPidTunings = [](int segment) {
@@ -1342,43 +1343,47 @@ int main(int argc, char *argv[]) {
     showPidTunings(ui.cmbTempPidSegment->currentData().toInt());
 
     QObject::connect(ui.btnCondStart, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready || !peltier_cond.isReady() || !condTemperatureValid) return;
+        if (!peltier_cond.isReady() || !condTemperatureValid) return;
         cond_pid.reset();
         is_cond_running = true;
         refreshTemperatureControls();
     });
     QObject::connect(ui.btnCondStop, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready) return;
         is_cond_running = false;
         peltier_cond.set_duty_cycle(0);
         cond_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
         refreshTemperatureControls();
     });
     QObject::connect(ui.btnSatStart, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready || !heater_sat.isReady() || !satTemperatureValid) return;
+        if (!heater_sat.isReady() || !satTemperatureValid) return;
         sat_pid.reset();
         is_sat_running = true;
         refreshTemperatureControls();
     });
     QObject::connect(ui.btnSatStop, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready) return;
         is_sat_running = false;
         heater_sat.set_duty_cycle(0);
         sat_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
         refreshTemperatureControls();
     });
     QObject::connect(ui.btnOpcStart, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready || !opcHeaterReady || !opcTemperatureValid) return;
+        if (!opcHeaterReady || !opcTemperatureValid) return;
         opc_pid.reset();
         is_opc_heater_running = true;
         refreshTemperatureControls();
-        ui.lblOpcPwm->setToolTip("单根 100 W 加热棒正在进行闭环温控。");
+        ui.lblOpcPwm->setToolTip(
+            "30 W 加热棒正在进行低超调闭环温控；最大输出约 15 W，接近目标时最高约 6 W。");
     });
     QObject::connect(ui.btnOpcStop, &QPushButton::clicked, [&]() {
-        if (startupPhase != StartupPhase::Ready) return;
         const bool stopped = opc_heater.set_duty_cycle(0.0);
         is_opc_heater_running = false;
         opc_pid.reset();
+        temperatureWarmupReady = false;
+        evaluateStartup();
         if (!stopped) {
             opcHeaterReady = false;
             ui.lblOpcPwm->setText("PWM 关闭失败");
@@ -1533,6 +1538,16 @@ int main(int argc, char *argv[]) {
                     ? "OPC 段 PT100 读数无效或超出 -50～150 ℃，加热已自动关闭；读数恢复后请手动重新启动。"
                     : QString("OPC 段 PT100 读数无效或超出 -50～150 ℃，且 PWM 关闭失败：%1")
                         .arg(QString::fromStdString(opc_heater.errorString())));
+            } else if (t_opc >= opc_pid.target + OPC_OVERTEMP_MARGIN_C) {
+                const bool stopped = opc_heater.set_duty_cycle(0.0);
+                if (!stopped) opcHeaterReady = false;
+                is_opc_heater_running = false;
+                opc_pid.reset();
+                ui.lblOpcPwm->setToolTip(stopped
+                    ? QString("OPC 温度超过目标 %1 ℃，加热已锁停；温度下降后请手动重新启动。")
+                          .arg(OPC_OVERTEMP_MARGIN_C, 0, 'f', 1)
+                    : QString("OPC 超温且 PWM 关闭失败：%1")
+                          .arg(QString::fromStdString(opc_heater.errorString())));
             } else {
                 p_opc = opc_pid.compute(t_opc, 0.5);
                 if (!opc_heater.set_duty_cycle(p_opc)) {
@@ -1575,6 +1590,7 @@ int main(int argc, char *argv[]) {
             std::abs(static_cast<double>(t_sat) - ui.sbSat->value()) <= TEMPERATURE_NORMAL_TOLERANCE_C;
         const bool opcNormal = is_opc_heater_running && opcTemperatureValid &&
             std::abs(static_cast<double>(t_opc) - ui.sbOpc->value()) <= TEMPERATURE_NORMAL_TOLERANCE_C;
+        temperatureWarmupReady = condNormal && satNormal && opcNormal;
         setTrafficLightState(ui.lblOverviewCondLamp, condNormal);
         setTrafficLightState(ui.lblOverviewSatLamp, satNormal);
         setTrafficLightState(ui.lblOverviewOpcLamp, opcNormal);

@@ -24,7 +24,7 @@ struct MainWindowUi {
     QLabel *lblParticleConcentration = nullptr;
     QLabel *lblStatus = nullptr;
     QLabel *lblCaptureState = nullptr;
-    QLabel *lblWarmupCountdown = nullptr;
+    QLabel *lblStartupState = nullptr;
     QLabel *lblOverviewCondLamp = nullptr;
     QLabel *lblOverviewSatLamp = nullptr;
     QLabel *lblOverviewOpcLamp = nullptr;

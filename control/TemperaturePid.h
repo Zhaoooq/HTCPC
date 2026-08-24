@@ -76,6 +76,7 @@ public:
     double kd = 60.0;
     double prediction_seconds = 12.0;
     double full_power_error = 4.0;
+    double max_output = 100.0;
     double approach_max_output = 50.0;
 
     void reset() {
@@ -114,13 +115,12 @@ public:
             return 0.0;
         }
 
-        // Full power is only allowed while both the current and predicted
-        // temperatures are safely outside the approach band. This removes the
-        // former 100% -> 50% discontinuity close to the setpoint.
+        // The configured high output is only allowed while both the current
+        // and predicted temperatures are safely outside the approach band.
         if (error > full_power_error &&
             predicted_stop_temp < target - (0.5 * full_power_error)) {
             integral = 0.0;
-            return 100.0;
+            return std::max(0.0, std::min(max_output, 100.0));
         }
         if (error < 1.0 && error > 0.0) {
             if (ki > 0.0) {
@@ -135,7 +135,9 @@ public:
 
         const double pidOutput =
             (kp * error) + (ki * integral) - (kd * filtered_rate);
-        return std::max(0.0, std::min(pidOutput, approach_max_output));
+        const double outputLimit =
+            std::max(0.0, std::min({approach_max_output, max_output, 100.0}));
+        return std::max(0.0, std::min(pidOutput, outputLimit));
     }
 };
 
