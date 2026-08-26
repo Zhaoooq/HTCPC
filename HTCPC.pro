@@ -4,7 +4,7 @@ CONFIG += c++11
 CONFIG -= app_bundle
 
 TEMPLATE = app
-TARGET = CPC_1
+TARGET = HTCPC
 
 INCLUDEPATH += . \
     hardware \

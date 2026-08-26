@@ -356,6 +356,16 @@ OpcCountResult analyzeOpcPulseSignal(
     std::vector<double> threshold;
     computeAdaptiveThreshold(signal, fs, params, baseline, noiseRange, threshold);
 
+    // The last sample belongs to the newest adaptive-threshold window. Expose
+    // its values so the UI can show what the counter is actually using without
+    // feeding the calculated threshold back into the operator settings.
+    if (!baseline.empty() && !noiseRange.empty() && !threshold.empty()) {
+        result.adaptiveThresholdValid = true;
+        result.currentBaseline = baseline.back();
+        result.currentNoiseRange = noiseRange.back();
+        result.currentThreshold = threshold.back();
+    }
+
     std::vector<OpcPulseSegment> segments =
         findPulseSegments(time, signal, threshold, fs, params);
 
@@ -413,8 +423,9 @@ OpcCountResult analyzeOpcPulseSignal(
         result.totalCount += seg.count;
     }
 
-    double duration = time.at(n - 1) - time.at(0);
-    if (duration <= 0.0 && fs > 0.0) duration = n / fs;
+    double duration = fs > 0.0
+        ? static_cast<double>(n) / fs
+        : time.at(n - 1) - time.at(0);
     result.countRate = duration > 0.0 ? result.totalCount / duration : 0.0;
 
     return result;
@@ -424,9 +435,65 @@ double estimateChunkDurationSeconds(const QVector<double>& time) {
     int n = time.size();
     if (n < 2) return 0.0;
 
-    double duration = time.at(n - 1) - time.at(0);
-    if (duration > 0.0 && std::isfinite(duration)) return duration;
-
     double fs = estimateSamplingRate(time, n);
-    return fs > 0.0 ? static_cast<double>(n) / fs : 0.0;
+    if (fs > 0.0) return static_cast<double>(n) / fs;
+
+    double duration = time.at(n - 1) - time.at(0);
+    return duration > 0.0 && std::isfinite(duration) ? duration : 0.0;
+}
+
+ParticleCountRateAccumulator::ParticleCountRateAccumulator(double targetDurationSeconds)
+    : targetDurationSeconds_(
+          std::isfinite(targetDurationSeconds) && targetDurationSeconds > 0.0
+              ? targetDurationSeconds
+              : 1.0) {}
+
+void ParticleCountRateAccumulator::reset() {
+    accumulatedCount_ = 0;
+    accumulatedDurationSeconds_ = 0.0;
+}
+
+bool ParticleCountRateAccumulator::addChunk(
+    int particleCount,
+    double durationSeconds,
+    double& countRate
+) {
+    if (particleCount < 0 || !std::isfinite(durationSeconds) || durationSeconds <= 0.0) {
+        return false;
+    }
+
+    accumulatedCount_ += particleCount;
+    accumulatedDurationSeconds_ += durationSeconds;
+    if (accumulatedDurationSeconds_ < targetDurationSeconds_) return false;
+
+    countRate = static_cast<double>(accumulatedCount_) / accumulatedDurationSeconds_;
+    reset();
+    return std::isfinite(countRate);
+}
+
+long long ParticleCountRateAccumulator::accumulatedCount() const {
+    return accumulatedCount_;
+}
+
+double ParticleCountRateAccumulator::accumulatedDurationSeconds() const {
+    return accumulatedDurationSeconds_;
+}
+
+double applyParticleCountCalibration(
+    double rawCountRate,
+    const ParticleCalibrationParams& calibration
+) {
+    if (!std::isfinite(rawCountRate) || rawCountRate < 0.0 ||
+        !std::isfinite(calibration.a) || !std::isfinite(calibration.b) ||
+        !std::isfinite(calibration.c)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    const double calibratedValue =
+        calibration.a * rawCountRate * rawCountRate +
+        calibration.b * rawCountRate + calibration.c;
+    if (!std::isfinite(calibratedValue)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return std::max(0.0, calibratedValue);
 }

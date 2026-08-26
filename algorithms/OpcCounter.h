@@ -22,6 +22,28 @@ struct OpcParams {
     int maxOverlapCount = 5;
 };
 
+struct ParticleCalibrationParams {
+    double a = 0.0;
+    double b = 1.0;
+    double c = 0.0;
+};
+
+class ParticleCountRateAccumulator {
+public:
+    explicit ParticleCountRateAccumulator(double targetDurationSeconds = 1.0);
+
+    void reset();
+    bool addChunk(int particleCount, double durationSeconds, double& countRate);
+
+    long long accumulatedCount() const;
+    double accumulatedDurationSeconds() const;
+
+private:
+    double targetDurationSeconds_ = 1.0;
+    long long accumulatedCount_ = 0;
+    double accumulatedDurationSeconds_ = 0.0;
+};
+
 struct OpcPulseSegment {
     int id = -1;
     int left = -1;
@@ -39,6 +61,10 @@ struct OpcCountResult {
     int widthCorrectionExtraCount = 0;
     double countRate = 0.0;
     double referenceWidthUs = 0.0;
+    bool adaptiveThresholdValid = false;
+    double currentBaseline = 0.0;
+    double currentNoiseRange = 0.0;
+    double currentThreshold = 0.0;
     QVector<double> peakTimes;
     QVector<double> peakVoltages;
 };
@@ -50,5 +76,12 @@ OpcCountResult analyzeOpcPulseSignal(
 );
 
 double estimateChunkDurationSeconds(const QVector<double>& time);
+
+// x 为 OPC 识别得到的原始颗粒计数速率（个/s），返回标定后的计数速率。
+// 二次标定公式：y = a*x^2 + b*x + c；颗粒数不允许为负，因此结果下限为 0。
+double applyParticleCountCalibration(
+    double rawCountRate,
+    const ParticleCalibrationParams& calibration
+);
 
 #endif // CPC_ALGORITHMS_OPCCOUNTER_H

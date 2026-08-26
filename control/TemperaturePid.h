@@ -78,6 +78,8 @@ public:
     double full_power_error = 4.0;
     double max_output = 100.0;
     double approach_max_output = 50.0;
+    double integral_band = 1.0;
+    bool preserve_integral_while_coasting = false;
 
     void reset() {
         integral = 0.0;
@@ -110,8 +112,12 @@ public:
 
         const double heatingRate = std::max(0.0, filtered_rate);
         const double predicted_stop_temp = cur + (heatingRate * prediction_seconds);
-        if (cur >= target || predicted_stop_temp >= target) {
+        if (cur >= target) {
             integral = 0.0;
+            return 0.0;
+        }
+        if (predicted_stop_temp >= target) {
+            if (!preserve_integral_while_coasting) integral = 0.0;
             return 0.0;
         }
 
@@ -122,7 +128,7 @@ public:
             integral = 0.0;
             return std::max(0.0, std::min(max_output, 100.0));
         }
-        if (error < 1.0 && error > 0.0) {
+        if (error < integral_band && error > 0.0) {
             if (ki > 0.0) {
                 integral += error * dt;
                 if (integral * ki > 10.0) integral = 10.0 / ki;

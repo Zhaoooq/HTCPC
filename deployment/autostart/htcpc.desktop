@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=HTCPC Control
+Comment=Start the high-temperature CPC control interface
+Exec=/home/pi/Desktop/HTCPC/start-htcpc.sh
+Path=/home/pi/Desktop/HTCPC
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+Hidden=false

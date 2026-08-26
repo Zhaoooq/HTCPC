@@ -14,6 +14,7 @@ class QTextBrowser;
 class QToolButton;
 class QWidget;
 struct OpcParams;
+struct ParticleCalibrationParams;
 
 struct MainWindowUi {
     QTabWidget *tabs = nullptr;
@@ -37,7 +38,19 @@ struct MainWindowUi {
     QPushButton *btnAcqStart = nullptr;
     QPushButton *btnAcqStop = nullptr;
     QPushButton *btnSaveRaw = nullptr;
+    QPushButton *btnResetOpcPlot = nullptr;
     QPushButton *btnResetParticlePlot = nullptr;
+
+    QDoubleSpinBox *sbOpcMinRange = nullptr;
+    QDoubleSpinBox *sbOpcThresholdOffset = nullptr;
+    QDoubleSpinBox *sbOpcWindowMs = nullptr;
+    QDoubleSpinBox *sbParticleCalibrationA = nullptr;
+    QDoubleSpinBox *sbParticleCalibrationB = nullptr;
+    QDoubleSpinBox *sbParticleCalibrationC = nullptr;
+    QPushButton *btnParticleCalibrationApply = nullptr;
+    QPushButton *btnParticleCalibrationReset = nullptr;
+    QLabel *lblParticleCalibrationStatus = nullptr;
+    QLabel *lblOpcAlgorithmRealtime = nullptr;
 
     QDoubleSpinBox *sbCond = nullptr;
     QDoubleSpinBox *sbSat = nullptr;
@@ -99,6 +112,9 @@ struct MainWindowUi {
     QTextBrowser *liquidLog = nullptr;
 };
 
-MainWindowUi buildMainWindow(QApplication& app, QMainWindow& window, OpcParams& opcParams);
+MainWindowUi buildMainWindow(QApplication& app,
+                             QMainWindow& window,
+                             OpcParams& opcParams,
+                             const ParticleCalibrationParams& particleCalibration);
 
 #endif // CPC_UI_MAINWINDOWUI_H

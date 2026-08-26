@@ -49,6 +49,7 @@
 #include "state/AppRuntimeState.h"
 #include "ui/Formatters.h"
 #include "ui/MainWindowUi.h"
+#include "ui/PlotSetup.h"
 
 namespace {
 
@@ -64,9 +65,9 @@ struct PidTunings {
     double kd;
 };
 
-constexpr PidTunings COND_PID_RECOMMENDED = {20.0, 1.5, 40.0};
+constexpr PidTunings COND_PID_RECOMMENDED = {8.0, 0.10, 90.0};
 constexpr PidTunings SAT_PID_RECOMMENDED = {8.0, 0.10, 90.0};
-constexpr PidTunings OPC_PID_RECOMMENDED = {6.0, 0.05, 100.0};
+constexpr PidTunings OPC_PID_RECOMMENDED = {8.0, 0.10, 60.0};
 constexpr double OPC_OVERTEMP_MARGIN_C = 5.0;
 
 volatile std::sig_atomic_t pendingTerminationSignal = 0;
@@ -114,7 +115,7 @@ int main(int argc, char *argv[]) {
     PT100Sensor cond_sensor("/dev/spidev1.0", -5.0f, 0.94866653f, -2.88653625f);
     PT100Sensor sat_sensor("/dev/spidev1.1", -8.0f, 0.95384681f, 0.17535515f);
     PT100Sensor opc_sensor("/dev/spidev1.2", 0.0f, 0.99875547f, -9.19239152f);
-    HardwarePWM peltier_cond(PinMap::HARDWARE_PWM_CHIP, 0, PinMap::PIN_PELTIER_COND, 5);
+    HardwarePWM heater_cond(PinMap::HARDWARE_PWM_CHIP, 0, PinMap::PIN_HEATER_COND, 5);
     HardwarePWM heater_sat(PinMap::HARDWARE_PWM_CHIP, 1, PinMap::PIN_HEATER_SAT, 5);
     LgpioPwmOutput vacuum_pump(gpio_handle, PinMap::PIN_VACUUM_PUMP, 200.0f);
     LgpioPwmOutput opc_heater(gpio_handle, PinMap::PIN_OPC_HEATER_PWM, 5.0f);
@@ -125,16 +126,16 @@ int main(int argc, char *argv[]) {
     bool bypassValveReady = gpioReady && bypass_valve.isReady();
     bool pumpReady = gpioReady && vacuum_pump.isReady();
     bool opcHeaterReady = gpioReady && opc_heater.isReady();
-    bool condPwmReady = peltier_cond.isReady();
+    bool condPwmReady = heater_cond.isReady();
     bool satPwmReady = heater_sat.isReady();
 
-    HybridCoolingPID cond_pid;
+    PredictiveHeatingPID cond_pid;
     PredictiveHeatingPID sat_pid;
     PredictiveHeatingPID opc_pid;
     QSettings pidSettings(QSettings::IniFormat,
                           QSettings::UserScope,
-                          QStringLiteral("CPC"),
-                          QStringLiteral("CPC_1"));
+                          QStringLiteral("HTCPC"),
+                          QStringLiteral("HTCPC"));
     auto loadPidTunings = [&](const QString& keyPrefix, const PidTunings& defaults) {
         bool kpOk = false;
         bool kiOk = false;
@@ -152,7 +153,43 @@ int main(int argc, char *argv[]) {
     const PidTunings condStored = loadPidTunings("temperature/cond", COND_PID_RECOMMENDED);
     const PidTunings satStored = loadPidTunings("temperature/sat", SAT_PID_RECOMMENDED);
     const PidTunings opcStored = loadPidTunings("temperature/opc", OPC_PID_RECOMMENDED);
+    auto loadCalibrationCoefficient = [&](const QString& key,
+                                          double defaultValue,
+                                          double absoluteLimit) {
+        bool ok = false;
+        const double value = pidSettings.value(key, defaultValue).toDouble(&ok);
+        return ok && std::isfinite(value) && std::abs(value) <= absoluteLimit
+            ? value
+            : defaultValue;
+    };
+    ParticleCalibrationParams particleCalibration;
+    particleCalibration.a = loadCalibrationCoefficient("particle/calibration_a", 0.0, 1000000.0);
+    particleCalibration.b = loadCalibrationCoefficient("particle/calibration_b", 1.0, 1000000.0);
+    particleCalibration.c = loadCalibrationCoefficient("particle/calibration_c", 0.0, 1000000000.0);
+    auto loadOpcAlgorithmSetting = [&](const QString& key,
+                                       double defaultValue,
+                                       double minimum,
+                                       double maximum) {
+        bool ok = false;
+        const double value = pidSettings.value(key, defaultValue).toDouble(&ok);
+        return ok && std::isfinite(value) && value >= minimum && value <= maximum
+            ? value
+            : defaultValue;
+    };
+    OpcParams opcParams;
+    opcParams.minRange = loadOpcAlgorithmSetting(
+        "opc_algorithm/min_range", opcParams.minRange, 0.001, 2.0);
+    opcParams.thresholdOffset = loadOpcAlgorithmSetting(
+        "opc_algorithm/threshold_offset", opcParams.thresholdOffset, -1.0, 1.0);
+    opcParams.windowMs = loadOpcAlgorithmSetting(
+        "opc_algorithm/window_ms", opcParams.windowMs, 1.0, 1000.0);
     cond_pid.setTunings(condStored.kp, condStored.ki, condStored.kd);
+    // The condenser now uses two heater rods instead of a Peltier cooler.
+    // Keep the initial limits conservative and user-tunable until the actual
+    // heater power and thermal response have been measured on the HTCPC.
+    cond_pid.prediction_seconds = 20.0;
+    cond_pid.full_power_error = 6.0;
+    cond_pid.approach_max_output = 40.0;
     sat_pid.setTunings(satStored.kp, satStored.ki, satStored.kd);
     // Saturation heaters have significant residual heat. Start braking earlier
     // and keep the near-target output below the former 50% ceiling.
@@ -160,13 +197,14 @@ int main(int argc, char *argv[]) {
     sat_pid.full_power_error = 6.0;
     sat_pid.approach_max_output = 40.0;
     opc_pid.setTunings(opcStored.kp, opcStored.ki, opcStored.kd);
-    // The OPC uses a 30 W heater with a long sensor/thermal delay.  Limit the
-    // injected heat and coast much earlier than the saturation heater so the
-    // stored heat does not carry the chamber far beyond its setpoint.
-    opc_pid.prediction_seconds = 90.0;
-    opc_pid.full_power_error = 8.0;
+    // The two OPC heater rods share one PWM output. Keep a conservative output
+    // cap until their combined power and thermal delay have been measured.
+    opc_pid.prediction_seconds = 30.0;
+    opc_pid.full_power_error = 6.0;
     opc_pid.max_output = 50.0;
-    opc_pid.approach_max_output = 20.0;
+    opc_pid.approach_max_output = 30.0;
+    opc_pid.integral_band = 2.0;
+    opc_pid.preserve_integral_while_coasting = true;
     ActuatorState actuatorState;
     bool &is_cond_running = actuatorState.condRunning;
     bool &is_sat_running = actuatorState.satRunning;
@@ -175,14 +213,24 @@ int main(int argc, char *argv[]) {
     bool &is_bypass_valve_open = actuatorState.bypassValveOpen;
     double &pump_current_power = actuatorState.pumpCurrentPower;
 
-    OpcParams opcParams;
-    constexpr double BYPASS_LOW_FLOW_ML_MIN = 300.0;
-    constexpr double BYPASS_HIGH_FLOW_ML_MIN = 1500.0;
-    double currentSampleFlowMlMin = BYPASS_LOW_FLOW_ML_MIN;
-
     QMainWindow window;
     window.setWindowFlag(Qt::FramelessWindowHint);
-    MainWindowUi ui = buildMainWindow(app, window, opcParams);
+    MainWindowUi ui = buildMainWindow(app, window, opcParams, particleCalibration);
+    auto saveOpcAlgorithmSettings = [&]() {
+        pidSettings.setValue("opc_algorithm/min_range", opcParams.minRange);
+        pidSettings.setValue("opc_algorithm/threshold_offset", opcParams.thresholdOffset);
+        pidSettings.setValue("opc_algorithm/window_ms", opcParams.windowMs);
+        pidSettings.sync();
+    };
+    QObject::connect(ui.sbOpcMinRange,
+                     QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                     [&](double) { saveOpcAlgorithmSettings(); });
+    QObject::connect(ui.sbOpcThresholdOffset,
+                     QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                     [&](double) { saveOpcAlgorithmSettings(); });
+    QObject::connect(ui.sbOpcWindowMs,
+                     QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                     [&](double) { saveOpcAlgorithmSettings(); });
     DaqWorker *daqWorker = new DaqWorker();
     bool shutdownRequested = false;
     QString shutdownTrigger = QStringLiteral("正常退出");
@@ -231,19 +279,65 @@ int main(int argc, char *argv[]) {
     QVector<double> rawVoltageBuffer;
     QVector<double> opcDisplayTimeBuffer;
     QVector<double> opcDisplayVoltageBuffer;
-    constexpr double PARTICLE_CONCENTRATION_SMOOTHING_ALPHA = 0.35;
+    QVector<double> opcPeakTimeBuffer;
+    QVector<double> opcPeakVoltageBuffer;
+    constexpr double PARTICLE_DISPLAY_SMOOTHING_ALPHA = 0.35;
+    ParticleCountRateAccumulator particleCountRateAccumulator(1.0);
     constexpr int MAX_RAW_BUFFER_SAMPLES = 2000000; // 约 10 秒 @ 200 kSPS，避免长时间运行撑爆内存。
     constexpr int RAW_TRIM_MARGIN_SAMPLES = 200000; // 批量裁剪，避免每帧搬移百万级 QVector。
     constexpr double OPC_DISPLAY_WINDOW_SECONDS = 0.05;
     constexpr int OPC_DISPLAY_POINTS_PER_CHUNK = 1000;
+    constexpr int OPC_PLOT_REFRESH_INTERVAL_MS = 33; // 约 30 FPS，兼顾树莓派上的平滑度与负载。
+    bool hasLatestAdaptiveThreshold = false;
+    double latestAdaptiveBaseline = 0.0;
+    double latestAdaptiveNoiseRange = 0.0;
+    double latestAdaptiveThreshold = 0.0;
+    double latestAdaptiveOffset = 0.0;
+
+    auto updateParticleCalibrationStatus = [&](const QString& prefix) {
+        ui.lblParticleCalibrationStatus->setText(
+            QString("%1：a=%2，b=%3，c=%4")
+                .arg(prefix)
+                .arg(particleCalibration.a, 0, 'g', 10)
+                .arg(particleCalibration.b, 0, 'g', 10)
+                .arg(particleCalibration.c, 0, 'g', 10));
+    };
+    auto applyParticleCalibrationSettings = [&](bool restoredDefault) {
+        particleCalibration.a = ui.sbParticleCalibrationA->value();
+        particleCalibration.b = ui.sbParticleCalibrationB->value();
+        particleCalibration.c = ui.sbParticleCalibrationC->value();
+        pidSettings.setValue("particle/calibration_a", particleCalibration.a);
+        pidSettings.setValue("particle/calibration_b", particleCalibration.b);
+        pidSettings.setValue("particle/calibration_c", particleCalibration.c);
+        pidSettings.sync();
+
+        // 避免新旧标定尺度在指数平滑中混合。
+        latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+        smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
+        latestParticleConcentrationValid = false;
+        particleCountRateAccumulator.reset();
+        updateParticleCalibrationStatus(
+            pidSettings.status() == QSettings::NoError
+                ? (restoredDefault ? QStringLiteral("已恢复默认并保存")
+                                   : QStringLiteral("已应用并保存"))
+                : QStringLiteral("参数已应用，但保存失败"));
+    };
+    QObject::connect(ui.btnParticleCalibrationApply, &QPushButton::clicked, [&]() {
+        applyParticleCalibrationSettings(false);
+    });
+    QObject::connect(ui.btnParticleCalibrationReset, &QPushButton::clicked, [&]() {
+        ui.sbParticleCalibrationA->setValue(0.0);
+        ui.sbParticleCalibrationB->setValue(1.0);
+        ui.sbParticleCalibrationC->setValue(0.0);
+        applyParticleCalibrationSettings(true);
+    });
+    updateParticleCalibrationStatus(QStringLiteral("当前已加载"));
 
     updateAcqUi = [&]() {
         const bool workerRunning = daqWorker->isRunning();
         const bool isStopping = workerRunning && !is_acquiring;
-        const bool acquisitionUnlocked = startupPhase == StartupPhase::Ready;
         ui.btnAcqStart->setEnabled(
-            acquisitionUnlocked && !pressureZeroing &&
-            !is_acquiring && !workerRunning && pumpReady);
+            !is_acquiring && !workerRunning);
         ui.btnAcqStop->setEnabled(is_acquiring);
         ui.btnSaveRaw->setEnabled(!rawTimeBuffer.isEmpty());
         if (startupPhase == StartupPhase::SelfCheck) {
@@ -256,7 +350,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (startupPhase == StartupPhase::WarmingUp) {
             ui.lblCaptureState->setText("采集: 等待系统就绪");
-            ui.lblStatus->setText("状态: 热机中；除开始采集外可手动操作");
+            ui.lblStatus->setText("状态: 热机中");
         } else {
             ui.lblCaptureState->setText(
                 is_acquiring ? "采集: 运行中" : (isStopping ? "采集: 正在停止" : "采集: 已停止"));
@@ -268,6 +362,7 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(daqWorker, &QThread::finished, &window, [&]() {
         is_acquiring = false;
+        stopPumpSafely();
         updateAcqUi();
     });
 
@@ -300,23 +395,41 @@ int main(int argc, char *argv[]) {
         }
 
         OpcCountResult opcResult = analyzeOpcPulseSignal(time, voltage, opcParams);
+        if (opcResult.adaptiveThresholdValid) {
+            latestAdaptiveBaseline = opcResult.currentBaseline;
+            latestAdaptiveNoiseRange = opcResult.currentNoiseRange;
+            latestAdaptiveThreshold = opcResult.currentThreshold;
+            latestAdaptiveOffset = opcParams.thresholdOffset;
+            hasLatestAdaptiveThreshold = true;
+        }
+        opcPeakTimeBuffer += opcResult.peakTimes;
+        opcPeakVoltageBuffer += opcResult.peakVoltages;
+        int firstPeak = 0;
+        while (firstPeak < opcPeakTimeBuffer.size() &&
+               opcPeakTimeBuffer.at(firstPeak) < displayCutoff) {
+            ++firstPeak;
+        }
+        if (firstPeak > 0) {
+            opcPeakTimeBuffer.remove(0, firstPeak);
+            opcPeakVoltageBuffer.remove(0, firstPeak);
+        }
         hasLatestOpcFrame = true;
 
-        // 按操作员手动选择的旁路模式，使用 300/1500 ml/min 计算颗粒浓度。
-        double chunkDurationSeconds = estimateChunkDurationSeconds(time);
-        bool hasValidSampleFlow =
-            std::isfinite(currentSampleFlowMlMin) && currentSampleFlowMlMin > 0.0;
-        if (hasValidSampleFlow && chunkDurationSeconds > 0.0) {
-            double chunkVolumeMl = currentSampleFlowMlMin * chunkDurationSeconds / 60.0;
-            if (chunkVolumeMl > 0.0 && std::isfinite(chunkVolumeMl)) {
-                double chunkParticleConcentration =
-                    static_cast<double>(opcResult.totalCount) / chunkVolumeMl;
+        // 累计至少 1 秒的完整数据块后才结算一次颗粒计数速率，
+        // 避免将约 20 ms 的短块速率以 100 ms 频率刷新到主界面。
+        double rawOneSecondCountRate = 0.0;
+        const double chunkDurationSeconds = estimateChunkDurationSeconds(time);
+        if (particleCountRateAccumulator.addChunk(
+                opcResult.totalCount, chunkDurationSeconds, rawOneSecondCountRate)) {
+            const double calibratedParticleValue =
+                applyParticleCountCalibration(rawOneSecondCountRate, particleCalibration);
+            if (std::isfinite(calibratedParticleValue)) {
                 if (std::isfinite(smoothedParticleConcentration)) {
                     smoothedParticleConcentration =
-                        PARTICLE_CONCENTRATION_SMOOTHING_ALPHA * chunkParticleConcentration +
-                        (1.0 - PARTICLE_CONCENTRATION_SMOOTHING_ALPHA) * smoothedParticleConcentration;
+                        PARTICLE_DISPLAY_SMOOTHING_ALPHA * calibratedParticleValue +
+                        (1.0 - PARTICLE_DISPLAY_SMOOTHING_ALPHA) * smoothedParticleConcentration;
                 } else {
-                    smoothedParticleConcentration = chunkParticleConcentration;
+                    smoothedParticleConcentration = calibratedParticleValue;
                 }
                 latestParticleConcentration = smoothedParticleConcentration;
                 latestParticleConcentrationValid = std::isfinite(latestParticleConcentration);
@@ -325,13 +438,9 @@ int main(int argc, char *argv[]) {
                 smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
                 latestParticleConcentrationValid = false;
             }
-        } else {
-            latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
-            smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
-            latestParticleConcentrationValid = false;
+            latestParticleConcentrationTime = time.last();
+            hasLatestParticleConcentration = true;
         }
-        latestParticleConcentrationTime = time.last();
-        hasLatestParticleConcentration = true;
     }, Qt::QueuedConnection);
 
     QObject::connect(daqWorker, &DaqWorker::errorOccurred, &window, [&](const QString& msg) {
@@ -343,12 +452,23 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(ui.btnAcqStart, &QPushButton::clicked, [&]() {
         if (startupPhase != StartupPhase::Ready) {
-            QMessageBox::information(
-                &window,
-                "暂不能采集",
-                "请等待三段温度达到目标值 ±1 ℃，并完成压力校零。\n"
-                "热机期间其余功能仍可手动操作。");
-            return;
+            const QString notReadyReason = startupBlockReason.isEmpty()
+                ? QString("三段温度尚未全部达到目标值 ±1°C，或压力校零尚未完成。")
+                : QString("系统自检尚未通过：%1").arg(startupBlockReason);
+            QMessageBox notReadyBox(
+                QMessageBox::Warning,
+                "系统尚未准备好",
+                QString("%1\n仍然采集可能导致数据不可靠，是否继续？").arg(notReadyReason),
+                QMessageBox::NoButton,
+                &window);
+            QPushButton *continueButton = notReadyBox.addButton(
+                "仍要采集", QMessageBox::AcceptRole);
+            QPushButton *cancelButton = notReadyBox.addButton(
+                "取消", QMessageBox::RejectRole);
+            notReadyBox.setDefaultButton(cancelButton);
+            notReadyBox.setEscapeButton(cancelButton);
+            notReadyBox.exec();
+            if (notReadyBox.clickedButton() != continueButton) return;
         }
         if (daqWorker->isRunning()) return;
         QString pumpError;
@@ -364,18 +484,26 @@ int main(int argc, char *argv[]) {
         rawVoltageBuffer.clear();
         opcDisplayTimeBuffer.clear();
         opcDisplayVoltageBuffer.clear();
+        opcPeakTimeBuffer.clear();
+        opcPeakVoltageBuffer.clear();
         hasLatestOpcFrame = false;
         latestParticleConcentration = std::numeric_limits<double>::quiet_NaN();
         smoothedParticleConcentration = std::numeric_limits<double>::quiet_NaN();
         hasLatestParticleConcentration = false;
         latestParticleConcentrationValid = false;
+        particleCountRateAccumulator.reset();
         particlePlotFollowLatest = true;
         particlePlotAutoY = true;
+        setOpcPlotAutoView(ui.opcPlot, true);
         ui.opcPlot->graph(0)->data()->clear();
+        ui.opcPlot->graph(1)->data()->clear();
         ui.particleConcentrationPlot->graph(0)->data()->clear();
         ui.particleConcentrationPlot->xAxis->setRange(0, 60);
         ui.particleConcentrationPlot->yAxis->setRange(0, 10);
-        ui.lblParticleConcentration->setText("-- 个/ml");
+        ui.lblParticleConcentration->setText("-- 个/s");
+        hasLatestAdaptiveThreshold = false;
+        ui.lblOpcAlgorithmRealtime->setText(
+            "实时算法结果：等待 OPC 采集数据（cutoff 为实际判定阈值，offset 为人工修正量）");
         is_acquiring = true;
         daqWorker->startDaq();
         updateAcqUi();
@@ -385,6 +513,7 @@ int main(int argc, char *argv[]) {
         if (!is_acquiring && !daqWorker->isRunning()) return;
         is_acquiring = false;
         daqWorker->stopDaq();
+        stopPumpSafely();
         updateAcqUi();
     });
 
@@ -392,11 +521,21 @@ int main(int argc, char *argv[]) {
     QObject::connect(plotRefreshTimer, &QTimer::timeout, [&]() {
         if (!is_acquiring) return;
 
+        if (hasLatestAdaptiveThreshold) {
+            ui.lblOpcAlgorithmRealtime->setText(
+                QString("实时算法结果：cutoff %1 V  |  本底 %2 V  |  噪声宽度 %3 V  |  offset %4 V（人工修正）")
+                    .arg(latestAdaptiveThreshold, 0, 'f', 4)
+                    .arg(latestAdaptiveBaseline, 0, 'f', 4)
+                    .arg(latestAdaptiveNoiseRange, 0, 'f', 4)
+                    .arg(latestAdaptiveOffset, 0, 'f', 4));
+            hasLatestAdaptiveThreshold = false;
+        }
+
         if (hasLatestParticleConcentration) {
             ui.lblParticleConcentration->setText(
                 latestParticleConcentrationValid
                     ? formatParticleConcentration(latestParticleConcentration)
-                    : "-- 个/ml"
+                    : "-- 个/s"
             );
             if (latestParticleConcentrationValid) {
                 ui.particleConcentrationPlot->graph(0)->addData(
@@ -423,14 +562,29 @@ int main(int argc, char *argv[]) {
             hasLatestParticleConcentration = false;
         }
 
-        if (hasLatestOpcFrame && ui.tabs->currentWidget() == ui.opcTab && !opcDisplayTimeBuffer.isEmpty()) {
-            ui.opcPlot->graph(0)->setData(opcDisplayTimeBuffer, opcDisplayVoltageBuffer);
-            ui.opcPlot->xAxis->setRange(opcDisplayTimeBuffer.last(), OPC_DISPLAY_WINDOW_SECONDS, Qt::AlignRight);
-            ui.opcPlot->replot(QCustomPlot::rpQueuedReplot);
-            hasLatestOpcFrame = false;
-        }
     });
     plotRefreshTimer->start(100);
+
+    // OPC 波形单独以约 30 FPS 刷新。颗粒计数速率每累计满约 1 秒才产生新值，
+    // 100 ms 定时器只负责及时取走该新值，不会额外生成数据点。
+    QTimer *opcPlotRefreshTimer = new QTimer(&window);
+    opcPlotRefreshTimer->setTimerType(Qt::PreciseTimer);
+    QObject::connect(opcPlotRefreshTimer, &QTimer::timeout, [&]() {
+        if (!is_acquiring || !hasLatestOpcFrame ||
+            ui.tabs->currentWidget() != ui.opcTab || opcDisplayTimeBuffer.isEmpty()) {
+            return;
+        }
+
+        if (opcPlotAutoViewEnabled(ui.opcPlot)) {
+            // 时间数据由采集线程按顺序产生，告诉 QCustomPlot 无需每帧重新排序。
+            ui.opcPlot->graph(0)->setData(opcDisplayTimeBuffer, opcDisplayVoltageBuffer, true);
+            ui.opcPlot->graph(1)->setData(opcPeakTimeBuffer, opcPeakVoltageBuffer, true);
+            fitOpcPlotToData(ui.opcPlot, OPC_DISPLAY_WINDOW_SECONDS);
+            ui.opcPlot->replot(QCustomPlot::rpQueuedReplot);
+        }
+        hasLatestOpcFrame = false;
+    });
+    opcPlotRefreshTimer->start(OPC_PLOT_REFRESH_INTERVAL_MS);
 
     auto resetParticlePlotView = [&]() {
         particlePlotFollowLatest = true;
@@ -456,6 +610,27 @@ int main(int argc, char *argv[]) {
     };
 
     QObject::connect(ui.btnResetParticlePlot, &QPushButton::clicked, resetParticlePlotView);
+
+    auto resetOpcPlotView = [&]() {
+        setOpcPlotAutoView(ui.opcPlot, true);
+        if (!opcDisplayTimeBuffer.isEmpty()) {
+            ui.opcPlot->graph(0)->setData(opcDisplayTimeBuffer, opcDisplayVoltageBuffer, true);
+            ui.opcPlot->graph(1)->setData(opcPeakTimeBuffer, opcPeakVoltageBuffer, true);
+        }
+        fitOpcPlotToData(ui.opcPlot, OPC_DISPLAY_WINDOW_SECONDS);
+        ui.opcPlot->replot(QCustomPlot::rpQueuedReplot);
+    };
+
+    QObject::connect(ui.btnResetOpcPlot, &QPushButton::clicked, resetOpcPlotView);
+    QObject::connect(ui.opcPlot, &QCustomPlot::mousePress, [&](QMouseEvent *event) {
+        if (event && event->button() == Qt::LeftButton) setOpcPlotAutoView(ui.opcPlot, false);
+    });
+    QObject::connect(ui.opcPlot, &QCustomPlot::mouseWheel, [&](QWheelEvent *) {
+        setOpcPlotAutoView(ui.opcPlot, false);
+    });
+    QObject::connect(ui.opcPlot, &QCustomPlot::mouseDoubleClick, [&](QMouseEvent *) {
+        resetOpcPlotView();
+    });
 
     QObject::connect(ui.particleConcentrationPlot, &QCustomPlot::mousePress, [&](QMouseEvent *event) {
         if (event && event->button() == Qt::LeftButton) {
@@ -522,8 +697,8 @@ int main(int argc, char *argv[]) {
         ui.lblLiquidState->setText(state);
         const bool normal = state == QStringLiteral("正常");
         ui.lblLiquidState->setStyleSheet(normal
-            ? "font-size: 15px; color: #187A5A; font-weight: bold; background: #E8F8F5; border: 1px solid #A3E4D7; border-radius: 12px; padding: 4px 12px;"
-            : "font-size: 15px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
+            ? "font-size: 18px; color: #187A5A; font-weight: bold; background: #E8F8F5; border: 1px solid #A3E4D7; border-radius: 12px; padding: 4px 12px;"
+            : "font-size: 18px; color: #A93226; font-weight: bold; background: #FDEDEC; border: 1px solid #F5B7B1; border-radius: 12px; padding: 4px 12px;");
         setTrafficLightState(ui.lblOverviewLiquidLamp, normal);
     };
 
@@ -677,7 +852,7 @@ int main(int argc, char *argv[]) {
     }
     if (!condPwmReady) {
         ui.lblCondPwm->setText("PWM 不可用");
-        ui.lblCondPwm->setToolTip(QString::fromStdString(peltier_cond.errorString()));
+        ui.lblCondPwm->setToolTip(QString::fromStdString(heater_cond.errorString()));
     }
     if (!satPwmReady) {
         ui.lblSatPwm->setText("PWM 不可用");
@@ -711,7 +886,7 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 "零点校准期间请保持气泵关闭，且 H/L 两侧等压。");
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 12px; color: #B95E00; font-weight: bold; background: #FEF5E7; "
+                "font-size: 15px; color: #B95E00; font-weight: bold; background: #FEF5E7; "
                 "border: 1px solid #F5CBA7; border-radius: 10px; padding: 3px 8px;");
             compactPressureStates[channel] = QString("校零%1%").arg(percent);
         }
@@ -732,7 +907,7 @@ int main(int argc, char *argv[]) {
                 .arg(zeroVoltage, 0, 'f', 6)
                 .arg(uncorrectedPressurePa, 0, 'f', 1));
         ui.lblPressureStatus[channel]->setStyleSheet(
-            "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+            "font-size: 15px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
             "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
         ui.btnPressureZero->setEnabled(true);
         ui.btnPressureControlStart->setEnabled(true);
@@ -768,13 +943,13 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 QString("/dev/i2c-1 · 地址 0x48 · A%1 · ADS 128 SPS 轮询").arg(channel));
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 12px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
+                "font-size: 15px; color: #187A5A; font-weight: bold; background: #E8F8F5; "
                 "border: 1px solid #A3E4D7; border-radius: 10px; padding: 3px 8px;");
         } else {
             ui.lblPressureStatus[channel]->setText("警告");
             ui.lblPressureStatus[channel]->setToolTip(warning);
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "font-size: 15px; color: #A93226; font-weight: bold; background: #FDEDEC; "
                 "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
         }
         compactPressureStates[channel] = pressureText;
@@ -791,7 +966,7 @@ int main(int argc, char *argv[]) {
             ui.lblPressureStatus[channel]->setToolTip(
                 QString("ADS1115 通信错误：%1；请检查 I2C 接线并运行 i2cdetect -y 1").arg(error));
             ui.lblPressureStatus[channel]->setStyleSheet(
-                "font-size: 12px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+                "font-size: 15px; color: #A93226; font-weight: bold; background: #FDEDEC; "
                 "border: 1px solid #F5B7B1; border-radius: 10px; padding: 3px 8px;");
             compactPressureStates[channel] = "不可用";
         }
@@ -845,7 +1020,7 @@ int main(int argc, char *argv[]) {
     auto setValveStatus = [&](const QString& text, bool error) {
         ui.lblValveStatus->setText(text);
         ui.lblValveStatus->setStyleSheet(
-            QString("font-size: 14px; font-weight: bold; color: %1;")
+            QString("font-size: 17px; font-weight: bold; color: %1;")
                 .arg(error ? "#C0392B" : "#187A5A"));
     };
     auto showValveError = [&](const QString& operation, const QString& error) {
@@ -913,7 +1088,7 @@ int main(int argc, char *argv[]) {
         if (!closeError.isEmpty()) status += QString("；安全关闭失败：%1").arg(closeError);
         ui.lblPressureControlStatus->setText(status);
         ui.lblPressureControlStatus->setStyleSheet(
-            "font-size: 13px; color: #A93226; font-weight: bold; background: #FDEDEC; "
+            "font-size: 16px; color: #A93226; font-weight: bold; background: #FDEDEC; "
             "border: 1px solid #F5B7B1; border-radius: 6px; padding: 6px 9px;");
         if (showWarning) {
             QMessageBox::warning(&window, "压差闭环已停止", status);
@@ -980,7 +1155,7 @@ int main(int argc, char *argv[]) {
                          : QString("%1 Pa").arg(targetPressurePa(), 0, 'f', 1))
                 .arg(initialOpening, 0, 'f', 1));
         ui.lblPressureControlStatus->setStyleSheet(
-            "font-size: 13px; color: #117A65; font-weight: bold; background: #E8F8F5; "
+            "font-size: 16px; color: #117A65; font-weight: bold; background: #E8F8F5; "
             "border: 1px solid #A3E4D7; border-radius: 6px; padding: 6px 9px;");
     });
 
@@ -1129,15 +1304,11 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(ui.btnBypassHighFlow, &QPushButton::clicked, [&]() {
         is_bypass_valve_open = bypass_valve.set(true);
-        if (is_bypass_valve_open) {
-            currentSampleFlowMlMin = BYPASS_HIGH_FLOW_ML_MIN;
-        }
         refreshFlowModeState();
     });
     QObject::connect(ui.btnBypassLowFlow, &QPushButton::clicked, [&]() {
         if (bypass_valve.set(false)) {
             is_bypass_valve_open = false;
-            currentSampleFlowMlMin = BYPASS_LOW_FLOW_ML_MIN;
         }
         refreshFlowModeState();
     });
@@ -1165,7 +1336,7 @@ int main(int argc, char *argv[]) {
     bool satTemperatureValid = false;
     refreshTemperatureControls = [&]() {
         ui.btnCondStart->setEnabled(
-            peltier_cond.isReady() && condTemperatureValid && !is_cond_running);
+            heater_cond.isReady() && condTemperatureValid && !is_cond_running);
         ui.btnCondStop->setEnabled(is_cond_running);
         ui.btnSatStart->setEnabled(
             heater_sat.isReady() && satTemperatureValid && !is_sat_running);
@@ -1195,7 +1366,7 @@ int main(int argc, char *argv[]) {
             startupPhase = StartupPhase::SelfCheck;
             ui.lblStartupState->setText("未就绪");
             ui.lblStartupState->setStyleSheet(
-                "font-size: 19px; font-weight: 800; color: #A93226; background: transparent;");
+                "font-size: 22px; font-weight: 800; color: #A93226; background: transparent;");
             ui.lblStartupState->setToolTip(
                 QString("系统尚未就绪：\n• %1\n除开始采集外，可用功能仍可手动操作。")
                     .arg(failures.join("\n• ")));
@@ -1223,18 +1394,18 @@ int main(int argc, char *argv[]) {
             startupPhase = StartupPhase::Ready;
             ui.lblStartupState->setText("已就绪");
             ui.lblStartupState->setStyleSheet(
-                "font-size: 19px; font-weight: 800; color: #187A5A; background: transparent;");
+                "font-size: 22px; font-weight: 800; color: #187A5A; background: transparent;");
             ui.lblStartupState->setToolTip(
-                "三段温度均达到目标值 ±1 ℃，压力校零已完成，可以开始采集。");
+                "三段温度均达到目标值 ±1°C，压力校零已完成，可以开始采集。");
         } else {
             startupPhase = StartupPhase::WarmingUp;
             ui.lblStartupState->setText("热机中");
             ui.lblStartupState->setStyleSheet(
-                "font-size: 19px; font-weight: 800; color: #C45F00; background: transparent;");
+                "font-size: 22px; font-weight: 800; color: #C45F00; background: transparent;");
             ui.lblStartupState->setToolTip(
                 pressureZeroing
                     ? "三段温控正在热机，压力传感器正在校零；仅开始采集不可用。"
-                    : "等待三段温度均达到目标值 ±1 ℃；仅开始采集不可用。");
+                    : "等待三段温度均达到目标值 ±1°C；仅开始采集不可用。");
         }
         refreshTemperatureControls();
         refreshPumpControls();
@@ -1343,14 +1514,14 @@ int main(int argc, char *argv[]) {
     showPidTunings(ui.cmbTempPidSegment->currentData().toInt());
 
     QObject::connect(ui.btnCondStart, &QPushButton::clicked, [&]() {
-        if (!peltier_cond.isReady() || !condTemperatureValid) return;
+        if (!heater_cond.isReady() || !condTemperatureValid) return;
         cond_pid.reset();
         is_cond_running = true;
         refreshTemperatureControls();
     });
     QObject::connect(ui.btnCondStop, &QPushButton::clicked, [&]() {
         is_cond_running = false;
-        peltier_cond.set_duty_cycle(0);
+        heater_cond.set_duty_cycle(0);
         cond_pid.reset();
         temperatureWarmupReady = false;
         evaluateStartup();
@@ -1376,7 +1547,7 @@ int main(int argc, char *argv[]) {
         is_opc_heater_running = true;
         refreshTemperatureControls();
         ui.lblOpcPwm->setToolTip(
-            "30 W 加热棒正在进行低超调闭环温控；最大输出约 15 W，接近目标时最高约 6 W。");
+            "两根加热棒共用一路低超调闭环 PWM；当前最大占空比 50%，接近目标时最高 30%。");
     });
     QObject::connect(ui.btnOpcStop, &QPushButton::clicked, [&]() {
         const bool stopped = opc_heater.set_duty_cycle(0.0);
@@ -1415,6 +1586,7 @@ int main(int argc, char *argv[]) {
         timer->stop();
         pressureControlTimer.stop();
         plotRefreshTimer->stop();
+        opcPlotRefreshTimer->stop();
         daqWorker->stopDaq();
         results << "[成功] 已请求停止数据采集与全部控制定时器";
 
@@ -1424,9 +1596,9 @@ int main(int argc, char *argv[]) {
         is_pump_running = false;
         is_bypass_valve_open = false;
 
-        const bool condStopped = peltier_cond.safeDisable();
+        const bool condStopped = heater_cond.safeDisable();
         recordResult("冷凝段 PWM 归零", condStopped,
-                     QString::fromStdString(peltier_cond.errorString()));
+                     QString::fromStdString(heater_cond.errorString()));
         const bool satStopped = heater_sat.safeDisable();
         recordResult("饱和段 PWM 归零", satStopped,
                      QString::fromStdString(heater_sat.errorString()));
@@ -1497,18 +1669,18 @@ int main(int argc, char *argv[]) {
         double p_opc = 0.0;
 
         if (is_cond_running && !condTemperatureValid) {
-            peltier_cond.set_duty_cycle(0.0);
+            heater_cond.set_duty_cycle(0.0);
             is_cond_running = false;
             cond_pid.reset();
             ui.lblCondPwm->setToolTip("冷凝段 PT100 读数无效或超出 -50～150 ℃，输出已关闭。");
         } else if (is_cond_running) {
             p_cond = cond_pid.compute(t_cond, 0.5);
-            if (!peltier_cond.set_duty_cycle(p_cond)) {
+            if (!heater_cond.set_duty_cycle(p_cond)) {
                 is_cond_running = false;
                 p_cond = 0.0;
                 ui.btnCondStart->setEnabled(false);
                 ui.btnCondStop->setEnabled(false);
-                ui.lblCondPwm->setToolTip(QString::fromStdString(peltier_cond.errorString()));
+                ui.lblCondPwm->setToolTip(QString::fromStdString(heater_cond.errorString()));
             }
         }
         if (is_sat_running && !satTemperatureValid) {
@@ -1568,7 +1740,7 @@ int main(int argc, char *argv[]) {
         }
 
         ui.lblCondTemp->setText(QString("当前: %1 ℃").arg(formatTemp(t_cond)));
-        ui.lblCondPwm->setText(peltier_cond.isReady()
+        ui.lblCondPwm->setText(heater_cond.isReady()
             ? QString("功率: %1 %").arg(p_cond, 0, 'f', 1)
             : QString("PWM 不可用"));
         ui.lblSatTemp->setText(QString("当前: %1 ℃").arg(formatTemp(t_sat)));
@@ -1639,6 +1811,8 @@ int main(int argc, char *argv[]) {
     if (!daqWorker->isRunning()) delete daqWorker;
     plotRefreshTimer->stop();
     delete plotRefreshTimer;
+    opcPlotRefreshTimer->stop();
+    delete opcPlotRefreshTimer;
     if (gpio_handle >= 0) lgGpiochipClose(gpio_handle);
 
     if (shutdownRequested) {

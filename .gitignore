@@ -18,7 +18,7 @@ ui_*.h
 *.dll
 *.dylib
 *.exe
-/CPC_1
+/HTCPC
 
 # Build directories
 build/
