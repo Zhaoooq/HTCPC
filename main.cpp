@@ -216,6 +216,9 @@ int main(int argc, char *argv[]) {
     QMainWindow window;
     window.setWindowFlag(Qt::FramelessWindowHint);
     MainWindowUi ui = buildMainWindow(app, window, opcParams, particleCalibration);
+    cond_pid.target = ui.sbCond->value();
+    sat_pid.target = ui.sbSat->value();
+    opc_pid.target = ui.sbOpc->value();
     auto saveOpcAlgorithmSettings = [&]() {
         pidSettings.setValue("opc_algorithm/min_range", opcParams.minRange);
         pidSettings.setValue("opc_algorithm/threshold_offset", opcParams.thresholdOffset);
@@ -1657,7 +1660,7 @@ int main(int argc, char *argv[]) {
         float t_sat = sat_sensor.read_temperature();
         float t_opc = opc_sensor.read_temperature();
         constexpr double MIN_VALID_TEMP_C = -50.0;
-        constexpr double MAX_VALID_TEMP_C = 150.0;
+        constexpr double MAX_VALID_TEMP_C = 300.0;
         condTemperatureValid = std::isfinite(t_cond) &&
             t_cond >= MIN_VALID_TEMP_C && t_cond <= MAX_VALID_TEMP_C;
         satTemperatureValid = std::isfinite(t_sat) &&
@@ -1672,7 +1675,7 @@ int main(int argc, char *argv[]) {
             heater_cond.set_duty_cycle(0.0);
             is_cond_running = false;
             cond_pid.reset();
-            ui.lblCondPwm->setToolTip("冷凝段 PT100 读数无效或超出 -50～150 ℃，输出已关闭。");
+            ui.lblCondPwm->setToolTip("冷凝段 PT100 读数无效或超出 -50～300 ℃，输出已关闭。");
         } else if (is_cond_running) {
             p_cond = cond_pid.compute(t_cond, 0.5);
             if (!heater_cond.set_duty_cycle(p_cond)) {
@@ -1687,7 +1690,7 @@ int main(int argc, char *argv[]) {
             heater_sat.set_duty_cycle(0.0);
             is_sat_running = false;
             sat_pid.reset();
-            ui.lblSatPwm->setToolTip("饱和段 PT100 读数无效或超出 -50～150 ℃，输出已关闭。");
+            ui.lblSatPwm->setToolTip("饱和段 PT100 读数无效或超出 -50～300 ℃，输出已关闭。");
         } else if (is_sat_running) {
             p_sat = sat_pid.compute(t_sat, 0.5);
             if (!heater_sat.set_duty_cycle(p_sat)) {
@@ -1707,8 +1710,8 @@ int main(int argc, char *argv[]) {
                 ui.btnOpcStart->setEnabled(false);
                 ui.btnOpcStop->setEnabled(false);
                 ui.lblOpcPwm->setToolTip(stopped
-                    ? "OPC 段 PT100 读数无效或超出 -50～150 ℃，加热已自动关闭；读数恢复后请手动重新启动。"
-                    : QString("OPC 段 PT100 读数无效或超出 -50～150 ℃，且 PWM 关闭失败：%1")
+                    ? "OPC 段 PT100 读数无效或超出 -50～300 ℃，加热已自动关闭；读数恢复后请手动重新启动。"
+                    : QString("OPC 段 PT100 读数无效或超出 -50～300 ℃，且 PWM 关闭失败：%1")
                         .arg(QString::fromStdString(opc_heater.errorString())));
             } else if (t_opc >= opc_pid.target + OPC_OVERTEMP_MARGIN_C) {
                 const bool stopped = opc_heater.set_duty_cycle(0.0);

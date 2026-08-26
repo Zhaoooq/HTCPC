@@ -30,6 +30,26 @@ int main() {
     assert(nearlyEqual(thresholdResult.currentThreshold, 1.010));
     assert(nearlyEqual(estimateChunkDurationSeconds(thresholdTime), 0.1));
 
+    QVector<double> overlappingTime;
+    QVector<double> overlappingVoltage(200, 0.0);
+    for (int i = 0; i < overlappingVoltage.size(); ++i) {
+        overlappingTime.append(i * 1e-6);
+    }
+    const double overlappingPulse[] = {
+        0.012, 0.025, 0.045, 0.070, 0.090, 0.100, 0.097, 0.092, 0.090,
+        0.093, 0.098, 0.096, 0.091, 0.089, 0.092, 0.097, 0.095, 0.090,
+        0.088, 0.091, 0.096, 0.090, 0.075, 0.055, 0.030, 0.012
+    };
+    for (int i = 0; i < 26; ++i) {
+        overlappingVoltage[70 + i] = overlappingPulse[i];
+    }
+    const OpcCountResult overlappingResult =
+        analyzeOpcPulseSignal(overlappingTime, overlappingVoltage, OpcParams());
+    assert(overlappingResult.segmentCount == 1);
+    assert(overlappingResult.totalCount == 4);
+    assert(overlappingResult.valleySplitExtraCount == 3);
+    assert(overlappingResult.peakTimes.size() == 4);
+
     ParticleCalibrationParams calibration;
     assert(nearlyEqual(applyParticleCountCalibration(125.0, calibration), 125.0));
 

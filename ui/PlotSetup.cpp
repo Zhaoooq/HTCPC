@@ -21,6 +21,7 @@ constexpr double MIN_TOUCH_X_SPAN_SECONDS = 0.0002;
 constexpr double MAX_TOUCH_X_SPAN_SECONDS = 0.5;
 constexpr double MIN_TOUCH_Y_SPAN_VOLTS = 0.02;
 constexpr double MAX_TOUCH_Y_SPAN_VOLTS = 50.0;
+constexpr qint64 TOUCH_REPLOT_INTERVAL_MS = 33;
 
 QPointF touchCenter(const QList<QTouchEvent::TouchPoint>& points) {
     QPointF center;
@@ -51,6 +52,7 @@ public:
     explicit TouchPlotController(QCustomPlot *plot)
         : QObject(plot), plot_(plot) {
         clock_.start();
+        replotClock_.start();
         plot_->setAttribute(Qt::WA_AcceptTouchEvents, true);
         plot_->installEventFilter(this);
     }
@@ -122,7 +124,7 @@ private:
 
         lastPointCount_ = points.size();
         lastCenter_ = center;
-        plot_->replot(QCustomPlot::rpQueuedReplot);
+        requestReplot();
         event->accept();
         return true;
     }
@@ -130,6 +132,7 @@ private:
     bool endTouch(QTouchEvent *event) {
         if (!active_) return false;
 
+        bool restoredAutoView = false;
         if (startedWithOnePoint_ && !moved_) {
             const qint64 now = clock_.elapsed();
             if (now - lastTapMs_ <= 450 &&
@@ -137,7 +140,7 @@ private:
                            lastCenter_.y() - lastTapPosition_.y()) <= 45.0) {
                 setOpcPlotAutoView(plot_, true);
                 fitOpcPlotToData(plot_);
-                plot_->replot(QCustomPlot::rpQueuedReplot);
+                restoredAutoView = true;
                 lastTapMs_ = -1000;
             } else {
                 lastTapMs_ = now;
@@ -145,6 +148,9 @@ private:
             }
         }
 
+        // A throttled update may still be pending when the fingers leave the
+        // screen. Always render the final pan/zoom range before ending it.
+        if (moved_ || restoredAutoView) requestReplot(true);
         active_ = false;
         lastPointCount_ = 0;
         lastDistance_ = 0.0;
@@ -152,8 +158,15 @@ private:
         return true;
     }
 
+    void requestReplot(bool force = false) {
+        if (!force && replotClock_.elapsed() < TOUCH_REPLOT_INTERVAL_MS) return;
+        plot_->replot(QCustomPlot::rpQueuedReplot);
+        replotClock_.restart();
+    }
+
     QCustomPlot *plot_ = nullptr;
     QElapsedTimer clock_;
+    QElapsedTimer replotClock_;
     bool active_ = false;
     bool moved_ = false;
     bool startedWithOnePoint_ = false;

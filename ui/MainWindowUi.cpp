@@ -447,9 +447,9 @@ MainWindowUi buildMainWindow(QApplication& app,
     QGroupBox *satGroup = createTempGroup("饱和段 · 3 根加热棒", "#E74C3C", ui.sbSat, ui.btnSatStart, ui.btnSatStop, ui.lblSatTemp, ui.lblSatPwm);
     QGroupBox *opcGroup = createTempGroup("OPC段 · 2 根加热棒", "#F39C12", ui.sbOpc, ui.btnOpcStart, ui.btnOpcStop, ui.lblOpcTemp, ui.lblOpcPwm);
 
-    ui.sbCond->setValue(10.0);
-    ui.sbSat->setValue(40.0);
-    ui.sbOpc->setValue(40.0);
+    ui.sbCond->setValue(205.0);
+    ui.sbSat->setValue(250.0);
+    ui.sbOpc->setValue(250.0);
     ui.btnOpcStart->setEnabled(false);
     ui.btnOpcStop->setEnabled(false);
     ui.lblOpcPwm->setText("功率: 0.0 %");

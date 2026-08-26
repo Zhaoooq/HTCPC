@@ -49,7 +49,7 @@ QGroupBox* createTempGroup(
     btnLayout->addWidget(btnStop);
 
     spinBox = new TouchDoubleSpinBox(QString("设置%1目标温度").arg(title));
-    spinBox->setRange(-20, 100);
+    spinBox->setRange(-20, 300);
     spinBox->setDecimals(1);
     spinBox->setSingleStep(0.5);
     spinBox->setMinimumHeight(38);

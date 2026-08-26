@@ -199,35 +199,6 @@ std::vector<int> findLocalPeaksInSegment(
     return candidates;
 }
 
-std::vector<int> mergeClosePeaks(
-    const std::vector<int>& candidates,
-    const std::vector<double>& signal,
-    double fs,
-    const OpcParams& params
-) {
-    std::vector<int> merged;
-    if (candidates.empty()) return merged;
-
-    int minDistanceSamples =
-        std::max(1, static_cast<int>(fs * params.splitPeakDistanceUs * 1e-6));
-
-    for (int idx : candidates) {
-        if (merged.empty()) {
-            merged.push_back(idx);
-            continue;
-        }
-
-        int last = merged.back();
-        if (idx - last < minDistanceSamples) {
-            if (signal[idx] > signal[last]) merged.back() = idx;
-        } else {
-            merged.push_back(idx);
-        }
-    }
-
-    return merged;
-}
-
 std::vector<int> removeWeakPeaksByProminence(
     const std::vector<int>& peaks,
     const std::vector<double>& signal,
@@ -249,60 +220,6 @@ std::vector<int> removeWeakPeaksByProminence(
     }
 
     return valid;
-}
-
-std::vector<int> splitPeaksByValley(
-    const std::vector<int>& peaks,
-    const std::vector<double>& signal,
-    const std::vector<double>& baseline,
-    const std::vector<double>& noiseRange,
-    const OpcParams& params
-) {
-    std::vector<int> validPeaks;
-    if (peaks.empty()) return validPeaks;
-
-    validPeaks.push_back(peaks.front());
-
-    for (size_t k = 1; k < peaks.size(); ++k) {
-        int prev = validPeaks.back();
-        int curr = peaks[k];
-        int left = std::min(prev, curr);
-        int right = std::max(prev, curr);
-        double valley = signal[left];
-
-        for (int i = left; i <= right; ++i) {
-            if (signal[i] < valley) valley = signal[i];
-        }
-
-        double lowerPeak = std::min(signal[prev], signal[curr]);
-        double valleyDrop = lowerPeak - valley;
-        double avgNoiseRange = 0.0;
-        double avgBaseline = 0.0;
-        int count = 0;
-
-        for (int i = left; i <= right; ++i) {
-            avgNoiseRange += noiseRange[i];
-            avgBaseline += baseline[i];
-            ++count;
-        }
-
-        avgNoiseRange /= std::max(1, count);
-        avgBaseline /= std::max(1, count);
-
-        double lowerPeakHeight = std::max(0.0, lowerPeak - avgBaseline);
-        double requiredDrop = std::max(
-            params.valleyDropFactor * avgNoiseRange,
-            params.valleyDropAmplitudeRatio * lowerPeakHeight
-        );
-
-        if (valleyDrop >= requiredDrop) {
-            validPeaks.push_back(curr);
-        } else if (signal[curr] > signal[prev]) {
-            validPeaks.back() = curr;
-        }
-    }
-
-    return validPeaks;
 }
 
 int findMaxIndexInSegment(const std::vector<double>& signal, int left, int right) {
@@ -374,12 +291,12 @@ OpcCountResult analyzeOpcPulseSignal(
     for (auto& seg : segments) {
         std::vector<int> candidates =
             findLocalPeaksInSegment(signal, threshold, seg.left, seg.right);
-        std::vector<int> merged =
-            mergeClosePeaks(candidates, signal, fs, params);
-        std::vector<int> strongPeaks =
-            removeWeakPeaksByProminence(merged, signal, noiseRange, seg.left, seg.right, params);
-        std::vector<int> validPeaks =
-            splitPeaksByValley(strongPeaks, signal, baseline, noiseRange, params);
+        // Do not collapse neighbouring local maxima into a single particle.
+        // Overlapping pulses can share one above-threshold segment and have a
+        // shallow valley, but each peak that passes the prominence check must
+        // still contribute to the particle count.
+        std::vector<int> validPeaks = removeWeakPeaksByProminence(
+            candidates, signal, noiseRange, seg.left, seg.right, params);
 
         if (validPeaks.empty()) {
             validPeaks.push_back(findMaxIndexInSegment(signal, seg.left, seg.right));
