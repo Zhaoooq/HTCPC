@@ -3,7 +3,6 @@
 #include "ControlWidgets.h"
 #include "PlotSetup.h"
 #include "TouchDoubleSpinBox.h"
-#include "WatermarkWidget.h"
 #include "../algorithms/OpcCounter.h"
 #include "../hardware/PinMap.h"
 #include "../qcustomplot.h"
@@ -386,7 +385,7 @@ MainWindowUi buildMainWindow(QApplication& app,
     ui.tabs = new QTabWidget();
     ui.tabs->setDocumentMode(true);
 
-    WatermarkWidget *overviewTab = new WatermarkWidget();
+    QWidget *overviewTab = new QWidget();
     QGridLayout *overviewLayout = new QGridLayout(overviewTab);
     overviewLayout->setContentsMargins(4, 8, 4, 4);
     overviewLayout->setSpacing(8);
@@ -464,7 +463,6 @@ MainWindowUi buildMainWindow(QApplication& app,
     overviewLayout->setRowStretch(0, 0);
     overviewLayout->setRowStretch(1, 0);
     overviewLayout->setRowStretch(2, 8);
-    QTimer::singleShot(0, overviewTab, [overviewTab]() { overviewTab->raiseWatermark(); });
     ui.tabs->addTab(overviewTab, "总览");
 
     QWidget *tempTab = new QWidget();
