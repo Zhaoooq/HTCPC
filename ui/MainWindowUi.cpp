@@ -133,12 +133,39 @@ protected:
 QPixmap loadHeaderLogo() {
     QPixmap pixmap;
     QString appDir = QCoreApplication::applicationDirPath();
-    if (pixmap.isNull()) pixmap.load(appDir + "/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load(appDir + "/assets/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/image.png");
+    if (pixmap.isNull()) pixmap.load(":/ui/research_group_header.png");
+    if (pixmap.isNull()) pixmap.load(appDir + "/research_group_header.png");
+    if (pixmap.isNull()) pixmap.load(appDir + "/assets/research_group_header.png");
+    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/research_group_header.png");
     return pixmap;
+}
+
+QPixmap cropWhiteLogoMargins(const QPixmap& source) {
+    if (source.isNull()) return source;
+
+    const QImage image = source.toImage();
+    int left = image.width();
+    int top = image.height();
+    int right = -1;
+    int bottom = -1;
+
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            const bool visible = color.alpha() >= 16 &&
+                                 (color.red() < 245 || color.green() < 245 || color.blue() < 245);
+            if (!visible) continue;
+            left = qMin(left, x);
+            top = qMin(top, y);
+            right = qMax(right, x);
+            bottom = qMax(bottom, y);
+        }
+    }
+
+    if (right < left || bottom < top) return source;
+    const QRect contentBounds(left, top, right - left + 1, bottom - top + 1);
+    const QRect paddedBounds = contentBounds.adjusted(-12, -12, 12, 12).intersected(image.rect());
+    return source.copy(paddedBounds);
 }
 
 QIcon createPowerIcon() {
@@ -263,9 +290,10 @@ MainWindowUi buildMainWindow(QApplication& app,
     headerLayout->setContentsMargins(14, 0, 14, 0);
 
     QLabel *lblLogo = new QLabel();
-    QPixmap logoPixmap = loadHeaderLogo();
+    QPixmap logoPixmap = cropWhiteLogoMargins(loadHeaderLogo());
     if (!logoPixmap.isNull()) {
-        lblLogo->setPixmap(logoPixmap.scaledToHeight(46, Qt::SmoothTransformation));
+        lblLogo->setPixmap(logoPixmap.scaled(QSize(260, 46), Qt::KeepAspectRatio,
+                                             Qt::SmoothTransformation));
         lblLogo->setStyleSheet("background: transparent; border: none;");
     } else {
         lblLogo->setText("北京航空航天大学");
@@ -275,7 +303,7 @@ MainWindowUi buildMainWindow(QApplication& app,
     headerLayout->addWidget(lblLogo);
 
     QLabel *lblPlatformTitle = new QLabel(" | 高温凝结核粒子计数器");
-    lblPlatformTitle->setStyleSheet("color: #005bac; font-size: 26px; font-weight: bold; background: transparent; border: none;");
+    lblPlatformTitle->setStyleSheet("color: #005bac; font-size: 24px; font-weight: bold; background: transparent; border: none;");
     headerLayout->addWidget(lblPlatformTitle);
     headerLayout->addStretch();
 
@@ -283,7 +311,7 @@ MainWindowUi buildMainWindow(QApplication& app,
     headerStatusBar->setStyleSheet("background: transparent;");
     QHBoxLayout *headerStatusLayout = new QHBoxLayout(headerStatusBar);
     headerStatusLayout->setContentsMargins(0, 0, 8, 0);
-    headerStatusLayout->setSpacing(12);
+    headerStatusLayout->setSpacing(8);
     QWidget *warmupIndicator = new QWidget();
     warmupIndicator->setStyleSheet("background: transparent;");
     QHBoxLayout *warmupIndicatorLayout = new QHBoxLayout(warmupIndicator);
@@ -322,7 +350,7 @@ MainWindowUi buildMainWindow(QApplication& app,
     headerLayout->addWidget(headerStatusBar);
 
     QComboBox *pageSelector = new QComboBox();
-    pageSelector->setFixedSize(150, 42);
+    pageSelector->setFixedSize(140, 42);
     pageSelector->setFocusPolicy(Qt::NoFocus);
     pageSelector->setMaxVisibleItems(7);
     pageSelector->setToolTip("切换功能页面");

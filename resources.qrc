@@ -1,6 +1,7 @@
 <RCC>
   <qresource prefix="/ui">
     <file>ui/dropdown_arrow.svg</file>
+    <file alias="research_group_header.png">research_group_header.png</file>
   </qresource>
   <qresource prefix="/web">
     <file alias="index.html">web/dashboard.html</file>
