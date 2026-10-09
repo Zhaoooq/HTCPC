@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QAbstractButton>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialog>
@@ -135,7 +136,7 @@ QPixmap loadHeaderLogo() {
     if (pixmap.isNull()) pixmap.load(appDir + "/buaa_header.png");
     if (pixmap.isNull()) pixmap.load(appDir + "/assets/buaa_header.png");
     if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/CPC_Control_System/buaa_header.png");
+    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
     if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/image.png");
     return pixmap;
 }
@@ -361,14 +362,14 @@ MainWindowUi buildMainWindow(QApplication& app,
     QGridLayout *overviewLayout = new QGridLayout(overviewTab);
     overviewLayout->setContentsMargins(4, 8, 4, 4);
     overviewLayout->setSpacing(8);
-    ui.lblParticleConcentration = new QLabel("-- 个/s");
+    ui.lblParticleConcentration = new QLabel("-- 个/ml");
     ui.lblParticleConcentration->setStyleSheet("font-size: 46px; color: #0E8F78; font-weight: bold; font-family: 'WenQuanYi Micro Hei';");
     ui.lblParticleConcentration->setAlignment(Qt::AlignCenter);
     ui.lblStatus = new QLabel("状态: 待机（执行器关闭）");
     ui.lblStatus->setAlignment(Qt::AlignCenter);
     ui.lblStatus->setWordWrap(true);
     ui.lblStatus->setStyleSheet("color: #E67E22; font-weight:bold; font-size: 18px;");
-    QGroupBox *particleConcentrationCard = createOverviewCard("颗粒计数速率", ui.lblParticleConcentration, "#16A085");
+    QGroupBox *particleConcentrationCard = createOverviewCard("颗粒数目浓度", ui.lblParticleConcentration, "#16A085");
 
     QGroupBox *systemCard = new QGroupBox("系统采集");
     systemCard->setStyleSheet(cardStyle("#2980B9"));
@@ -443,11 +444,11 @@ MainWindowUi buildMainWindow(QApplication& app,
     tempLayout->setContentsMargins(4, 8, 4, 4);
     tempLayout->setSpacing(8);
 
-    QGroupBox *condGroup = createTempGroup("冷凝段 · 2 根加热棒", "#3498DB", ui.sbCond, ui.btnCondStart, ui.btnCondStop, ui.lblCondTemp, ui.lblCondPwm);
-    QGroupBox *satGroup = createTempGroup("饱和段 · 3 根加热棒", "#E74C3C", ui.sbSat, ui.btnSatStart, ui.btnSatStop, ui.lblSatTemp, ui.lblSatPwm);
-    QGroupBox *opcGroup = createTempGroup("OPC段 · 2 根加热棒", "#F39C12", ui.sbOpc, ui.btnOpcStart, ui.btnOpcStop, ui.lblOpcTemp, ui.lblOpcPwm);
+    QGroupBox *condGroup = createTempGroup("冷凝段", "#3498DB", ui.sbCond, ui.btnCondStart, ui.btnCondStop, ui.lblCondTemp, ui.lblCondPwm);
+    QGroupBox *satGroup = createTempGroup("饱和段", "#E74C3C", ui.sbSat, ui.btnSatStart, ui.btnSatStop, ui.lblSatTemp, ui.lblSatPwm);
+    QGroupBox *opcGroup = createTempGroup("OPC段", "#F39C12", ui.sbOpc, ui.btnOpcStart, ui.btnOpcStop, ui.lblOpcTemp, ui.lblOpcPwm);
 
-    ui.sbCond->setValue(205.0);
+    ui.sbCond->setValue(200.0);
     ui.sbSat->setValue(250.0);
     ui.sbOpc->setValue(250.0);
     ui.btnOpcStart->setEnabled(false);
@@ -1007,6 +1008,267 @@ MainWindowUi buildMainWindow(QApplication& app,
     algorithmLayout->addWidget(calibrationGroup);
     algorithmLayout->addStretch();
     ui.tabs->addTab(algorithmTab, "算法");
+
+    ui.communicationTab = new QWidget();
+    QVBoxLayout *communicationLayout = new QVBoxLayout(ui.communicationTab);
+    communicationLayout->setContentsMargins(4, 8, 4, 4);
+    communicationLayout->setSpacing(8);
+
+    QGroupBox *networkGroup = new QGroupBox("本机有线网络 · 仅管理 eth0 / Ethernet");
+    networkGroup->setStyleSheet(cardStyle("#2980B9"));
+    QGridLayout *networkLayout = new QGridLayout(networkGroup);
+    networkLayout->setContentsMargins(14, 28, 14, 10);
+    networkLayout->setHorizontalSpacing(8);
+    networkLayout->setVerticalSpacing(6);
+    const QString networkCaptionStyle =
+        "font-size: 16px; color: #607481; font-weight: bold;";
+    const QString networkValueStyle =
+        "font-size: 18px; color: #2C5D7C; font-weight: bold; background: #F7FAFC; "
+        "border: 1px solid #D7E2E9; border-radius: 6px; padding: 4px 8px;";
+    auto makeCaption = [&](const QString &text) {
+        QLabel *label = new QLabel(text);
+        label->setStyleSheet(networkCaptionStyle);
+        return label;
+    };
+    auto makeNetworkValue = [&]() {
+        QLabel *label = new QLabel("--");
+        label->setStyleSheet(networkValueStyle);
+        label->setMinimumHeight(34);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        return label;
+    };
+    ui.lblNetworkInterface = makeNetworkValue();
+    ui.lblNetworkIpv4 = makeNetworkValue();
+    ui.lblNetworkLinkState = makeNetworkValue();
+    ui.lblNetworkProfile = makeNetworkValue();
+    networkLayout->addWidget(makeCaption("网卡"), 0, 0);
+    networkLayout->addWidget(ui.lblNetworkInterface, 0, 1);
+    networkLayout->addWidget(makeCaption("链路"), 0, 2);
+    networkLayout->addWidget(ui.lblNetworkLinkState, 0, 3);
+    networkLayout->addWidget(makeCaption("当前实际 IP"), 0, 4);
+    networkLayout->addWidget(ui.lblNetworkIpv4, 0, 5, 1, 2);
+    networkLayout->addWidget(makeCaption("连接配置"), 0, 7);
+    networkLayout->addWidget(ui.lblNetworkProfile, 0, 8);
+
+    ui.cmbNetworkIpv4Mode = new QComboBox();
+    ui.cmbNetworkIpv4Mode->addItem("DHCP 自动获取");
+    ui.cmbNetworkIpv4Mode->addItem("静态 IP");
+    ui.cmbNetworkIpv4Mode->setMinimumWidth(176);
+    ui.cmbNetworkIpv4Mode->setMinimumHeight(38);
+    auto createIpv4Editor = [&](const QString &title, QDoubleSpinBox *segments[4]) {
+        QWidget *editor = new QWidget();
+        QHBoxLayout *layout = new QHBoxLayout(editor);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(4);
+        for (int i = 0; i < 4; ++i) {
+            TouchDoubleSpinBox *segment = new TouchDoubleSpinBox(
+                QString("%1 · 第 %2 段").arg(title).arg(i + 1));
+            segment->setRange(0, 255);
+            segment->setDecimals(0);
+            segment->setFixedSize(66, 38);
+            segment->setStyleSheet(
+                "QDoubleSpinBox { background: #FFFFFF; border: 1px solid #B9C8D2; "
+                "border-radius: 6px; color: #264C63; font-size: 19px; font-weight: bold; }"
+                "QDoubleSpinBox:focus { border: 2px solid #2E86C1; }"
+                "QDoubleSpinBox:disabled { background: #E8ECEF; color: #929DA5; }");
+            segments[i] = segment;
+            layout->addWidget(segment);
+            if (i != 3) {
+                QLabel *dot = new QLabel(".");
+                dot->setStyleSheet("font-size: 22px; color: #526471; font-weight: bold;");
+                layout->addWidget(dot);
+            }
+        }
+        layout->addStretch();
+        return editor;
+    };
+    QWidget *ipEditor = createIpv4Editor("本机 IPv4", ui.sbNetworkIp);
+    ui.sbNetworkPrefix = new TouchDoubleSpinBox("设置 IPv4 前缀长度");
+    ui.sbNetworkPrefix->setRange(1, 32);
+    ui.sbNetworkPrefix->setDecimals(0);
+    ui.sbNetworkPrefix->setValue(24);
+    ui.sbNetworkPrefix->setPrefix("/");
+    ui.sbNetworkPrefix->setFixedSize(76, 38);
+    ui.chkNetworkGateway = new QCheckBox("网关");
+    ui.chkNetworkGateway->setStyleSheet(networkCaptionStyle +
+        " QCheckBox::indicator { width: 25px; height: 25px; }");
+    QWidget *gatewayEditor = createIpv4Editor("网关", ui.sbNetworkGateway);
+    ui.chkNetworkDns = new QCheckBox("DNS");
+    ui.chkNetworkDns->setStyleSheet(networkCaptionStyle +
+        " QCheckBox::indicator { width: 25px; height: 25px; }");
+    QWidget *dnsEditor = createIpv4Editor("DNS", ui.sbNetworkDns);
+    ui.lblNetworkNetmask = new QLabel("/24 = 255.255.255.0");
+    ui.lblNetworkNetmask->setStyleSheet(
+        "font-size: 16px; color: #526471; font-weight: bold;");
+    ui.lblRecommendedIpc = new QLabel("推荐工控机：192.168.50.1/24");
+    ui.lblRecommendedIpc->setStyleSheet(
+        "font-size: 16px; color: #176B55; font-weight: bold;");
+    ui.lblRecommendedIpc->setWordWrap(true);
+
+    networkLayout->addWidget(makeCaption("IPv4 模式"), 1, 0);
+    networkLayout->addWidget(ui.cmbNetworkIpv4Mode, 1, 1, 1, 2);
+    networkLayout->addWidget(makeCaption("IP 地址"), 1, 3);
+    networkLayout->addWidget(ipEditor, 1, 4, 1, 3);
+    networkLayout->addWidget(makeCaption("前缀"), 1, 7);
+    networkLayout->addWidget(ui.sbNetworkPrefix, 1, 8);
+    networkLayout->addWidget(ui.chkNetworkGateway, 2, 0);
+    networkLayout->addWidget(gatewayEditor, 2, 1, 1, 3);
+    networkLayout->addWidget(ui.chkNetworkDns, 2, 4);
+    networkLayout->addWidget(dnsEditor, 2, 5, 1, 4);
+    networkLayout->addWidget(ui.lblNetworkNetmask, 3, 0, 1, 4);
+    networkLayout->addWidget(ui.lblRecommendedIpc, 3, 4, 1, 5);
+
+    ui.lblNetworkOperationStatus = new QLabel("正在读取 NetworkManager 配置...");
+    ui.lblNetworkOperationStatus->setWordWrap(true);
+    ui.lblNetworkOperationStatus->setStyleSheet(
+        "font-size: 16px; color: #526471; font-weight: bold; padding: 3px 6px;");
+    ui.btnNetworkRefresh = new QPushButton("刷新网络");
+    ui.btnNetworkReset = new QPushButton("恢复推荐配置");
+    ui.btnNetworkApply = new QPushButton("应用网络设置");
+    ui.btnNetworkRefresh->setFixedSize(120, 42);
+    ui.btnNetworkReset->setFixedSize(156, 42);
+    ui.btnNetworkApply->setFixedSize(156, 42);
+    ui.btnNetworkRefresh->setStyleSheet(solidButtonStyle("#2980B9", "#21618C"));
+    ui.btnNetworkReset->setStyleSheet(solidButtonStyle("#71858A", "#56696E"));
+    ui.btnNetworkApply->setStyleSheet(solidButtonStyle("#167D68", "#116454"));
+    networkLayout->addWidget(ui.lblNetworkOperationStatus, 4, 0, 1, 4);
+    networkLayout->addWidget(ui.btnNetworkRefresh, 4, 5);
+    networkLayout->addWidget(ui.btnNetworkReset, 4, 6, 1, 2);
+    networkLayout->addWidget(ui.btnNetworkApply, 4, 8);
+    networkLayout->setColumnStretch(1, 1);
+    networkLayout->setColumnStretch(4, 1);
+    networkLayout->setColumnStretch(5, 1);
+    networkLayout->setColumnStretch(8, 1);
+
+    QHBoxLayout *serviceLayout = new QHBoxLayout();
+    serviceLayout->setSpacing(8);
+    const QString serviceValueStyle =
+        "font-size: 18px; color: #405766; font-weight: bold; background: #F7FAFC; "
+        "border: 1px solid #DCE4EA; border-radius: 7px; padding: 6px 10px;";
+    const QString enableButtonStyle =
+        "QPushButton { min-width: 104px; min-height: 44px; background: #7F8C8D; color: white; "
+        "border: none; border-radius: 22px; font-size: 19px; font-weight: bold; }"
+        "QPushButton:checked { background: #16A085; }"
+        "QPushButton:pressed { padding-top: 2px; }";
+    const QString portStyle =
+        "QDoubleSpinBox { min-height: 44px; padding: 3px 10px; background: #FFFFFF; "
+        "border: 1px solid #B9C8D2; border-radius: 7px; color: #264C63; "
+        "font-size: 22px; font-weight: bold; }"
+        "QDoubleSpinBox:focus { border: 2px solid #2E86C1; }";
+
+    QGroupBox *webGroup = new QGroupBox("Web 远程看板 · HTTP");
+    webGroup->setStyleSheet(cardStyle("#16A085"));
+    QGridLayout *webLayout = new QGridLayout(webGroup);
+    webLayout->setContentsMargins(14, 29, 14, 12);
+    webLayout->setHorizontalSpacing(10);
+    webLayout->setVerticalSpacing(8);
+    ui.lblWebStatus = new QLabel("● 状态未知");
+    ui.lblWebStatus->setAlignment(Qt::AlignCenter);
+    ui.lblWebStatus->setMinimumHeight(38);
+    ui.lblWebStatus->setWordWrap(true);
+    ui.btnWebEnable = new QPushButton("开");
+    ui.btnWebEnable->setCheckable(true);
+    ui.btnWebEnable->setChecked(true);
+    ui.btnWebEnable->setStyleSheet(enableButtonStyle);
+    ui.sbWebPort = new TouchDoubleSpinBox("设置 Web 远程看板端口");
+    ui.sbWebPort->setRange(1024.0, 65535.0);
+    ui.sbWebPort->setDecimals(0);
+    ui.sbWebPort->setSingleStep(1.0);
+    ui.sbWebPort->setValue(8080.0);
+    ui.sbWebPort->setStyleSheet(portStyle);
+    ui.lblWebAddress = new QLabel("网络地址不可用");
+    ui.lblWebAddress->setStyleSheet(serviceValueStyle);
+    ui.lblWebAddress->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    QLabel *webEnableCaption = new QLabel("启用远程看板");
+    QLabel *webPortCaption = new QLabel("HTTP 端口");
+    QLabel *webAddressCaption = new QLabel("当前访问地址");
+    webLayout->addWidget(ui.lblWebStatus, 0, 0, 1, 2);
+    webLayout->addWidget(webEnableCaption, 1, 0);
+    webLayout->addWidget(ui.btnWebEnable, 1, 1);
+    webLayout->addWidget(webPortCaption, 2, 0);
+    webLayout->addWidget(ui.sbWebPort, 2, 1);
+    webLayout->addWidget(webAddressCaption, 3, 0, 1, 2);
+    webLayout->addWidget(ui.lblWebAddress, 4, 0, 1, 2);
+    webLayout->setColumnStretch(1, 1);
+
+    QGroupBox *tcpGroup = new QGroupBox("工控机 TCP 通讯 · CPC Protocol V1.0");
+    tcpGroup->setStyleSheet(cardStyle("#8E44AD"));
+    QGridLayout *tcpLayout = new QGridLayout(tcpGroup);
+    tcpLayout->setContentsMargins(14, 29, 14, 12);
+    tcpLayout->setHorizontalSpacing(10);
+    tcpLayout->setVerticalSpacing(7);
+    ui.lblTcpStatus = new QLabel("● 状态未知");
+    ui.lblTcpStatus->setAlignment(Qt::AlignCenter);
+    ui.lblTcpStatus->setMinimumHeight(38);
+    ui.lblTcpStatus->setWordWrap(true);
+    ui.btnTcpEnable = new QPushButton("开");
+    ui.btnTcpEnable->setCheckable(true);
+    ui.btnTcpEnable->setChecked(true);
+    ui.btnTcpEnable->setStyleSheet(enableButtonStyle);
+    ui.sbTcpPort = new TouchDoubleSpinBox("设置工控机 TCP 端口");
+    ui.sbTcpPort->setRange(1024.0, 65535.0);
+    ui.sbTcpPort->setDecimals(0);
+    ui.sbTcpPort->setSingleStep(1.0);
+    ui.sbTcpPort->setValue(5000.0);
+    ui.sbTcpPort->setStyleSheet(portStyle);
+    ui.lblTcpAddress = new QLabel("网络地址不可用");
+    ui.lblTcpClient = new QLabel("未连接");
+    ui.lblTcpLastSequence = new QLabel("暂无数据");
+    ui.lblTcpLastSendTime = new QLabel("暂无数据");
+    for (QLabel *label : {ui.lblTcpAddress, ui.lblTcpClient,
+                          ui.lblTcpLastSequence, ui.lblTcpLastSendTime}) {
+        label->setStyleSheet(serviceValueStyle);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    }
+    QLabel *tcpEnableCaption = new QLabel("启用工控机 TCP");
+    QLabel *tcpPortCaption = new QLabel("TCP 端口");
+    QLabel *tcpAddressCaption = new QLabel("当前服务地址");
+    QLabel *tcpClientCaption = new QLabel("客户端");
+    QLabel *tcpLastCaption = new QLabel("最近发送");
+    tcpLayout->addWidget(ui.lblTcpStatus, 0, 0, 1, 4);
+    tcpLayout->addWidget(tcpEnableCaption, 1, 0);
+    tcpLayout->addWidget(ui.btnTcpEnable, 1, 1);
+    tcpLayout->addWidget(tcpPortCaption, 1, 2);
+    tcpLayout->addWidget(ui.sbTcpPort, 1, 3);
+    tcpLayout->addWidget(tcpAddressCaption, 2, 0);
+    tcpLayout->addWidget(ui.lblTcpAddress, 2, 1, 1, 3);
+    tcpLayout->addWidget(tcpClientCaption, 3, 0);
+    tcpLayout->addWidget(ui.lblTcpClient, 3, 1, 1, 3);
+    tcpLayout->addWidget(tcpLastCaption, 4, 0);
+    tcpLayout->addWidget(ui.lblTcpLastSequence, 4, 1);
+    tcpLayout->addWidget(ui.lblTcpLastSendTime, 4, 2, 1, 2);
+    tcpLayout->setColumnStretch(1, 1);
+    tcpLayout->setColumnStretch(3, 1);
+
+    serviceLayout->addWidget(webGroup, 1);
+    serviceLayout->addWidget(tcpGroup, 1);
+
+    QWidget *communicationActions = new QWidget();
+    QHBoxLayout *communicationActionLayout = new QHBoxLayout(communicationActions);
+    communicationActionLayout->setContentsMargins(0, 0, 0, 0);
+    communicationActionLayout->setSpacing(10);
+    ui.lblCommunicationApplyStatus = new QLabel("当前配置已应用");
+    ui.lblCommunicationApplyStatus->setWordWrap(true);
+    ui.lblCommunicationApplyStatus->setStyleSheet(
+        "font-size: 17px; color: #526471; font-weight: bold; padding: 6px 10px;");
+    ui.btnCommunicationReset = new QPushButton("恢复通讯默认");
+    ui.btnCommunicationApply = new QPushButton("应用通讯设置");
+    ui.btnCommunicationReset->setFixedSize(170, 46);
+    ui.btnCommunicationApply->setFixedSize(180, 46);
+    ui.btnCommunicationReset->setStyleSheet(
+        solidButtonStyle("#71858A", "#56696E") +
+        "QPushButton { min-height: 48px; }");
+    ui.btnCommunicationApply->setStyleSheet(
+        solidButtonStyle("#167D68", "#116454") +
+        "QPushButton { min-height: 48px; }");
+    communicationActionLayout->addWidget(ui.lblCommunicationApplyStatus, 1);
+    communicationActionLayout->addWidget(ui.btnCommunicationReset);
+    communicationActionLayout->addWidget(ui.btnCommunicationApply);
+
+    communicationLayout->addWidget(networkGroup, 0);
+    communicationLayout->addLayout(serviceLayout, 1);
+    communicationLayout->addWidget(communicationActions);
+    ui.tabs->addTab(ui.communicationTab, "通讯");
 
     ui.opcTab = new QWidget();
     QVBoxLayout *opcLayout = new QVBoxLayout(ui.opcTab);

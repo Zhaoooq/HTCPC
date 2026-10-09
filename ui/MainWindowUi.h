@@ -2,6 +2,7 @@
 #define CPC_UI_MAINWINDOWUI_H
 
 class QApplication;
+class QCheckBox;
 class QComboBox;
 class QCustomPlot;
 class QDoubleSpinBox;
@@ -51,6 +52,39 @@ struct MainWindowUi {
     QPushButton *btnParticleCalibrationReset = nullptr;
     QLabel *lblParticleCalibrationStatus = nullptr;
     QLabel *lblOpcAlgorithmRealtime = nullptr;
+
+    QWidget *communicationTab = nullptr;
+    QLabel *lblNetworkInterface = nullptr;
+    QLabel *lblNetworkIpv4 = nullptr;
+    QLabel *lblNetworkLinkState = nullptr;
+    QLabel *lblNetworkProfile = nullptr;
+    QComboBox *cmbNetworkIpv4Mode = nullptr;
+    QDoubleSpinBox *sbNetworkIp[4] = {nullptr, nullptr, nullptr, nullptr};
+    QDoubleSpinBox *sbNetworkPrefix = nullptr;
+    QCheckBox *chkNetworkGateway = nullptr;
+    QDoubleSpinBox *sbNetworkGateway[4] = {nullptr, nullptr, nullptr, nullptr};
+    QCheckBox *chkNetworkDns = nullptr;
+    QDoubleSpinBox *sbNetworkDns[4] = {nullptr, nullptr, nullptr, nullptr};
+    QLabel *lblNetworkNetmask = nullptr;
+    QLabel *lblRecommendedIpc = nullptr;
+    QLabel *lblNetworkOperationStatus = nullptr;
+    QPushButton *btnNetworkRefresh = nullptr;
+    QPushButton *btnNetworkReset = nullptr;
+    QPushButton *btnNetworkApply = nullptr;
+    QPushButton *btnWebEnable = nullptr;
+    QLabel *lblWebStatus = nullptr;
+    QDoubleSpinBox *sbWebPort = nullptr;
+    QLabel *lblWebAddress = nullptr;
+    QPushButton *btnTcpEnable = nullptr;
+    QLabel *lblTcpStatus = nullptr;
+    QDoubleSpinBox *sbTcpPort = nullptr;
+    QLabel *lblTcpAddress = nullptr;
+    QLabel *lblTcpClient = nullptr;
+    QLabel *lblTcpLastSequence = nullptr;
+    QLabel *lblTcpLastSendTime = nullptr;
+    QPushButton *btnCommunicationApply = nullptr;
+    QPushButton *btnCommunicationReset = nullptr;
+    QLabel *lblCommunicationApplyStatus = nullptr;
 
     QDoubleSpinBox *sbCond = nullptr;
     QDoubleSpinBox *sbSat = nullptr;

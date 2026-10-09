@@ -1,18 +1,20 @@
-#ifndef LIQUIDCONTROLSYSTEM_H
-#define LIQUIDCONTROLSYSTEM_H
+#ifndef CPC_CONTROL_LIQUID_CONTROL_SYSTEM_H
+#define CPC_CONTROL_LIQUID_CONTROL_SYSTEM_H
 
 #include <QObject>
 #include <QTimer>
 #include <QString>
 #include <lgpio.h>
 
+#include <functional>
+
 class LiquidControlSystem : public QObject {
     Q_OBJECT
 public:
     // 默认引脚：液位传感器27，进液电磁阀22，排液电磁阀6
-    explicit LiquidControlSystem(int lgpio_handle, 
-                                 int sensor_pin = 27, 
-                                 int inlet_pin = 22, 
+    explicit LiquidControlSystem(int lgpio_handle,
+                                 int sensor_pin = 27,
+                                 int inlet_pin = 22,
                                  int outlet_pin = 6,
                                  QObject *parent = nullptr);
     ~LiquidControlSystem();
@@ -23,6 +25,11 @@ public:
     void startMonitoring(); // 开启自动液位监控
     void stopMonitoring();  // 停止监控
     bool safeStop(QString *error = nullptr); // 停止监控并确认进、排液阀均已关闭
+    static bool closeInletThenOpenOutlet(
+        const std::function<int(int, int)>& writePin,
+        int inletPin,
+        int outletPin,
+        QString *error = nullptr);
 
 public slots:
     void startManualDrain(); // 开始手动排废液 (绑定UI按钮按下)
@@ -40,7 +47,7 @@ private slots:
 private:
     int h; // lgpio 句柄
     int p_sensor, p_inlet, p_outlet;
-    
+
     bool isRefilling;
     bool isDraining;
     bool hasLastLevelState;
@@ -59,7 +66,7 @@ private:
     static const int LOW_LEVEL_CONFIRM_SAMPLES = 2;
 
     void startRefill();
-    void stopRefill(const QString& reason);
+    bool stopRefill(const QString& reason);
 };
 
-#endif // LIQUIDCONTROLSYSTEM_H
+#endif // CPC_CONTROL_LIQUID_CONTROL_SYSTEM_H

@@ -283,7 +283,7 @@ void setupParticleConcentrationPlot(QCustomPlot *plot) {
     pen.setWidthF(2.5);
     plot->graph(0)->setPen(pen);
     plot->xAxis->setLabel("时间 (s)");
-    plot->yAxis->setLabel("颗粒计数速率 (个/s)");
+    plot->yAxis->setLabel("颗粒数目浓度 (个/ml)");
     plot->xAxis->setRange(0, 60);
     plot->yAxis->setRange(0, 10);
     const QPen axisPen(QColor("#71828E"));

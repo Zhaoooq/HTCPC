@@ -13,7 +13,7 @@ QPixmap loadBuaaHeaderPixmap() {
     if (pixmap.isNull()) pixmap.load(appDir + "/buaa_header.png");
     if (pixmap.isNull()) pixmap.load(appDir + "/assets/buaa_header.png");
     if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
-    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/CPC_Control_System/buaa_header.png");
+    if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/HTCPC/buaa_header.png");
     if (pixmap.isNull()) pixmap.load("/home/pi/Desktop/image.png");
     return pixmap;
 }

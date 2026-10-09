@@ -1,6 +1,6 @@
 # HTCPC 高温凝结核粒子计数器主控平台
 
-`HTCPC` 是从桌面 `CPC` 项目完整移植的高温凝结核粒子计数器（High-Temperature Condensation Particle Counter）整机控制程序。项目保留常温 CPC 的 OPC 采集与计数速率标定、气路、压差、液位、触控界面和安全关机功能，并将三个温区全部改为加热控制：饱和段 3 根加热棒、冷凝段 2 根加热棒、OPC 段 2 根加热棒。
+`HTCPC` 是从 `CPC` 项目移植的高温凝结核粒子计数器（High-Temperature Condensation Particle Counter）整机控制程序。项目保留 CPC 的 OPC 采集与计数标定、气路、压差、液位、触控界面和安全关机功能，将三个温区全部改为加热控制，并集成有线网络、Web 看板与工控机 TCP 通讯。
 
 > 本仓库面向实际硬件。编译成功只能证明软件可以构建，不能替代接线、电平、流量、温度和阀门动作的实机验证。首次运行前请先确认执行器默认状态安全。
 
@@ -8,7 +8,10 @@
 
 - 通过 FTDI D2XX + ADS8688 采集 OPC 模拟脉冲信号。
 - 对 OPC 信号进行动态阈值、脉冲分段、相邻峰拆分和重叠修正，计算颗粒计数速率并进行二次标定。
-- 每累计满约 1 秒更新一次颗粒计数速率趋势，同时显示 OPC 原始波形，并可将原始数据保存为 CSV。
+- 每累计满约 1 秒更新一次主界面颗粒数目浓度趋势，同时显示 OPC 原始波形，并可将原始数据保存为 CSV。
+- 提供独立通讯页面，可查看有线网卡状态、配置 DHCP/静态 IPv4，并管理 Web 与 TCP 服务。
+- 内置只读 Web 看板，可通过网线在 Windows 浏览器中实时查看颗粒浓度和最近 10 分钟趋势。
+- 内置 CPC TCP Protocol V1.0 服务，每秒向 Windows 工控机发送颗粒浓度和状态帧。
 - 使用三只 PT100/MAX31865 监测冷凝段、饱和段和 OPC 段温度。
 - 使用三路独立 PWM 控制三个温区；同一温区内的多根加热棒共用一路 PWM 指令。
 - 使用 ADS1115 轮询三路压差传感器，支持启动校零、滤波、量程检查和接反提示。
@@ -53,6 +56,19 @@ flowchart TB
     end
     Ready --> Acq
 
+    subgraph Communication[有线网络与工控机通讯]
+        direction LR
+        CommUI[通讯页面<br/>状态查看与显式应用] --> NetConfig[NetworkConfigManager<br/>DHCP / 静态 IPv4]
+        NetConfig --> NM[NetworkManager<br/>HTCPC-ETH0 配置 / 验证 / 回滚]
+        CommUI --> Web[RemoteDashboard<br/>HTTP / JSON :8080]
+        CommUI --> Tcp[CpcTcpServer<br/>CPC ASCII :5000]
+        Web --> Browser[Windows 浏览器]
+        Tcp --> IPC[Windows 工控机]
+    end
+    Launch -->|读取通讯配置| CommUI
+    Count --> Web
+    Count --> Tcp
+
     subgraph Pressure[比例阀与压差闭环]
         direction LR
         ValveDefault[启动自动设置<br/>80% / 16.80 mA] --> N4[N4IOA01 4–20 mA]
@@ -79,7 +95,7 @@ flowchart TB
 
 ## 界面页面
 
-程序使用 1280×720 全屏无边框界面，共包含六个页面：
+程序使用 1280×720 全屏无边框界面，共包含七个页面：
 
 | 页面 | 主要内容 |
 | --- | --- |
@@ -89,6 +105,7 @@ flowchart TB
 | 液位 | 液位状态、自动补液运行记录和“按住排液”控制 |
 | 算法 | OPC 动态阈值设置，以及基于原始计数速率（个/s）的 `a·x²+b·x+c` 二次标定参数 |
 | OPC | 空气入口 → 饱和段 → 冷凝段 → OPC 光腔流程提示和最近 50 ms 原始波形 |
+| 通讯 | 有线网卡状态、DHCP/静态 IPv4 设置、Web/TCP 服务开关与端口，以及客户端和发送状态 |
 
 所有数值参数采用触控输入：点击数值框会打开大尺寸数字键盘，可直接输入并确认；界面不再依赖微小的上下调节箭头，滚轮也不会误改参数。
 
@@ -107,7 +124,7 @@ flowchart TB
 | GPIO22 | 15 | 进液电磁阀 | 数字输出 | 高电平打开，低电平关闭；默认关闭 |
 | GPIO6 | 31 | 排液电磁阀 | 数字输出 | 高电平打开，低电平关闭；默认关闭 |
 | GPIO24 | 18 | 旁路电磁阀 | 数字输出 | 高电平打开=1.5 L/min；低电平关闭=0.3 L/min，默认为小流量 |
-| GPIO25 | 22 | OPC 段 2 根加热棒（共用） | `lgpio` PWM，5 Hz | 低超调闭环占空比 0–50%；启动和退出时为 0% |
+| GPIO25 | 22 | OPC 段 2 根加热棒（共用） | `lgpio` PWM，5 Hz | 闭环占空比 0–100%；启动和退出时为 0% |
 
 项目当前配置 `GPIO_CHIP=4`、`HARDWARE_PWM_CHIP=0`，对应已检查过的 Raspberry Pi 5 RP1 GPIO/PWM 布局。更换板卡或系统内核后，应先重新确认 `/dev/gpiochip*` 和 `/sys/class/pwm/pwmchip*`，不要只根据界面功率值判断引脚已有输出。
 
@@ -127,8 +144,8 @@ flowchart TB
 - 界面每 500 ms 读取温度并更新状态。
 - 冷凝段已由制冷片控制改为两根加热棒的预测式加热控制。
 - 饱和段 3 根加热棒共用一路预测式加热 PWM。
-- 默认目标温度为冷凝段 205 ℃、饱和段 250 ℃、OPC 段 250 ℃，界面允许在 -20～300 ℃ 范围内调整。
-- OPC 段 2 根加热棒共用一路低超调预测 PWM；当前最大输出 50%，接近目标后最高 30%，温度超过目标 5 ℃时锁停，待温度下降后需手动重启。
+- 默认目标温度为冷凝段 200 ℃、饱和段 250 ℃、OPC 段 250 ℃，界面允许在 -20～300 ℃ 范围内调整。
+- 三段温控均可按闭环算法输出最高 100%；OPC 段接近目标时最高输出 50%，温度超过目标 5 ℃时锁停，待温度下降后需手动重启。
 - 三段 PT100 读数无效或超出 -50～300 ℃ 时关闭对应加热；OPC 段 GPIO PWM 写入失败时也会立即关闭加热，恢复后需要手动重新启动温控。
 - 总览页以“目标温度 ±1 ℃”作为绿色状态灯判据。
 
@@ -156,7 +173,7 @@ flowchart TB
 - 累计至少 1 秒的完整数据块，以“累计颗粒数 ÷ 实际累计时长”计算原始颗粒计数速率 `x`，单位为 `个/s`。
 - 使用算法页保存的二次函数 `y = a·x² + b·x + c` 标定计数速率；默认 `a=0、b=1、c=0`。
 
-每次一秒窗口结算后，先应用二次标定，再使用系数 `0.35` 的指数平滑。主界面和趋势图统一显示为颗粒计数速率 `个/s`；在未引入实际流量换算时，不将其解释为体积浓度。
+每次一秒窗口结算后，先应用二次标定，再使用系数 `0.35` 的指数平滑。按当前界面约定，主界面、趋势图和通讯统一标注为 `个/ml`；其数值仍基于计数速率标定，没有使用 300/1500 ml/min 工况流量做体积换算。
 
 旁路模式仍用于控制实际气路工况，但不再参与颗粒数值计算：
 
@@ -230,29 +247,42 @@ flowchart TB
 ```text
 HTCPC/
 ├── main.cpp                         # 程序入口、硬件生命周期、信号连接和安全退出
-├── HTCPC.pro                        # Qt/qmake 工程配置
-├── daq_worker.h                     # FTDI/ADS8688 高速采集线程
-├── LiquidControlSystem.*            # 液位监控、自动补液和手动排液
+├── HTCPC.pro                       # Qt/qmake 工程配置
+├── acquisition/
+│   ├── daq_worker.*                 # FTDI/ADS8688 高速采集线程
+│   ├── AcquisitionController.*      # 采集生命周期与线程协调
+│   ├── OpcProcessingWorker.*        # OPC 数据处理线程
+│   └── RawDataWriter.*              # 原始数据异步写盘
 ├── algorithms/
 │   └── OpcCounter.*                 # OPC 动态阈值、峰识别和计数
 ├── control/
+│   ├── LiquidControlSystem.*        # 液位监控、自动补液和手动排液
 │   ├── TemperaturePid.h             # 三段预测式温控算法
-│   └── PressureValveController.*     # 压差 PI 控制器
+│   └── PressureValveController.*    # 压差 PI 控制器
 ├── hardware/
 │   ├── Ads1115PressureSensor.*       # 三路压差采集、校零和滤波
 │   ├── N4IOA01Valve.*               # Modbus RTU 4–20 mA 比例阀模块
 │   ├── PT100Sensor.*                 # SPI PT100/MAX31865 温度采集
 │   ├── PwmOutputs.*                  # RP1 sysfs PWM 和 lgpio 输出封装
 │   └── PinMap.h                      # 整机 GPIO/PWM 引脚表
+├── network/
+│   ├── RemoteDashboard.*             # 端口 8080 的只读 HTTP/JSON 远程看板
+│   ├── CpcTcpServer.*                # 端口 5000 的工控机 CPC ASCII 数据接口
+│   └── NetworkConfigManager.*        # 异步读取、应用并回滚 NetworkManager 配置
 ├── state/
 │   └── AppRuntimeState.h             # 执行器和采集运行状态
 ├── ui/
-│   ├── MainWindowUi.*                # 六个页面及全局界面结构
+│   ├── MainWindowUi.*                # 七个一级页面及全局界面结构
 │   ├── ControlWidgets.*              # 通用温控/总览控件
 │   ├── PlotSetup.*                   # OPC 与浓度曲线配置
 │   ├── Formatters.*                  # 显示格式化
 │   └── WatermarkWidget.*             # 页面水印
+├── web/
+│   └── dashboard.html                # Windows 浏览器端实时看板
 ├── deployment/                       # 树莓派开机画面、自动启动和桌面配置
+├── scripts/
+│   └── build-htcpc.sh               # 离源编译并更新实际运行文件
+├── build/                            # qmake/编译生成物（Git 忽略）
 ├── qcustomplot.*                     # QCustomPlot 绘图库
 └── start-htcpc.sh                    # 桌面自动启动入口
 ```
@@ -262,18 +292,18 @@ HTCPC/
 当前工程使用：
 
 - Raspberry Pi OS 64-bit / Raspberry Pi 5。
-- Qt 5 Widgets 与 PrintSupport。
-- qmake 和支持 C++11 的 g++。
+- Qt 5 Widgets、PrintSupport 与 Network。
+- qmake 和支持 C++17 的 g++。
 - `liblgpio`。
-- FTDI D2XX 头文件与动态库（`ftd2xx.h`、`libftd2xx`）。
+- `liblgpio-dev` 开发头文件。
+- FTDI D2XX 头文件（`ftd2xx.h`、`WinTypes.h`）与工程目录中的 ARMv8 动态库（`libftd2xx`）。
 - Linux I²C、SPI、串口和 sysfs PWM 接口。
 
-构建命令：
+推荐使用项目脚本进行离源构建。所有中间文件都保存在 `build/`，构建成功后才会更新根目录中供开机启动使用的 `HTCPC`：
 
 ```bash
 cd /home/pi/Desktop/HTCPC
-qmake HTCPC.pro
-make -j2
+./scripts/build-htcpc.sh
 ```
 
 生成的程序为：
@@ -299,6 +329,127 @@ cd /home/pi/Desktop/HTCPC
 - FTDI D2XX 设备
 
 同时应确认 `/dev/ttyAMA0` 未被串口控制台或其他进程占用，并可通过 `i2cdetect -y 1` 在 `0x48` 检测到 ADS1115。
+
+## 通讯与网络配置
+
+“通讯”页面同时管理有线 IPv4 和两个相互独立的应用服务：
+
+| 使用场景 | 树莓派角色 | Windows 角色 | 默认端口 | 数据方向 |
+| --- | --- | --- | ---: | --- |
+| Windows 网页看板 | HTTP/JSON 服务端 | Edge、Chrome 等浏览器客户端 | `8080` | 浏览器请求，树莓派返回页面和测量数据 |
+| Windows 工控机 | CPC TCP 服务端 | 工控机软件 TCP 客户端 | `5000` | 树莓派每约 1 秒向已连接客户端发送一帧结果 |
+
+两个服务都监听树莓派全部 IPv4 网卡（`0.0.0.0`），共用有线网卡的实际 IP，但开关、端口、连接状态互相独立。Web 与 TCP 端口不能相同。
+
+### 树莓派有线网络设置
+
+在“通讯”页面可以查看优先选取的 `eth0` 接口、当前 IPv4、链路状态和 NetworkManager profile，并在 DHCP 与静态 IPv4 之间切换。树莓派与一台 Windows 电脑用网线直连时，推荐使用：
+
+```text
+树莓派 eth0：     192.168.50.2 / 255.255.255.0（前缀 /24）
+Windows 有线网卡：192.168.50.1 / 255.255.255.0
+默认网关：        两端均留空
+DNS：             两端均留空
+```
+
+在树莓派上进入“通讯 → 本机有线网络”，选择“静态 IP”，填写 `192.168.50.2/24`，取消网关和 DNS，然后点击“应用网络设置”。网络参数和服务参数使用不同的应用按钮；只修改输入框不会立即改变系统。
+
+程序启动时只读取 NetworkManager 的真实配置，不会自动改写网络。应用设置时，`NetworkConfigManager` 创建或复用绑定到有线接口的 `HTCPC-ETH0` profile，不会修改 Wi-Fi、蓝牙或 VPN。写入前会保存原配置，应用后会验证实际地址；失败时自动恢复旧 profile 和活动连接。静态地址还会检查 IPv4 格式、前缀、网络地址、广播地址、回环/保留地址、网关同子网和 DNS 格式。
+
+修改树莓派 IP 会中断已有的浏览器和工控机 TCP 连接。网络恢复后，两个服务仍监听全部 IPv4 网卡，Windows 端改用新地址重新连接即可。
+
+### NetworkManager 权限部署
+
+HTCPC GUI 必须继续以普通用户运行，不能使用 `sudo ./HTCPC`。首次部署时由管理员一次性安装受限 PolicyKit 规则：
+
+```bash
+cd /home/pi/Desktop/HTCPC
+sudo deployment/install-network-permissions.sh pi
+sudo reboot
+```
+
+该脚本可重复执行，会创建 `cpc-network` 系统组、将指定桌面用户加入该组，并安装只覆盖 NetworkManager profile 修改和激活操作的规则；不会配置 `NOPASSWD ALL`。规则文件已存在时首次替换会保存 `.cpc-backup`。详见 `deployment/README.md`。
+
+### 树莓派连接 Windows 网页看板
+
+此场景中，树莓派是 HTTP 服务端，Windows 浏览器是客户端。网页看板只用于查看和保存测量数据，不提供气泵、阀门、温控或采集的远程控制。
+
+1. 用网线直连树莓派与 Windows，按上面的推荐地址设置两端有线网卡。
+2. 在树莓派“通讯”页面启用“Web 远程看板”，端口保持 `8080`，点击“应用通讯设置”。
+3. 在 Windows PowerShell 中运行 `ping 192.168.50.2`，再运行 `Test-NetConnection 192.168.50.2 -Port 8080`。
+4. 使用 Edge 或 Chrome 打开 `http://192.168.50.2:8080/`。
+
+网页和数据接口为：
+
+- 看板：`http://<树莓派地址>:8080/`
+- 实时快照：`http://<树莓派地址>:8080/api/snapshot`
+- 历史 CSV 下载：`http://<树莓派地址>:8080/api/history.csv`，可带 `from_sequence` / `to_sequence` 参数导出指定数据段。
+- 存活检查：`http://<树莓派地址>:8080/health`
+
+页面每秒获取一次最新快照，显示当前浓度、采集状态和最近 600 个有效数据点（约 10 分钟）。点击右上角“保存数据”开始记录，再次点击“停止保存”后，CSV 会下载到 Windows 本地。详细操作和排障见 [`docs/WINDOWS_DIRECT_ETHERNET.md`](docs/WINDOWS_DIRECT_ETHERNET.md)。
+
+### 树莓派连接 Windows 工控机
+
+此场景中，树莓派是 TCP 服务端，Windows 工控机软件必须作为 TCP 客户端主动建立长连接。该接口只发送颗粒结果，不提供网页、远程控制、OPC 原始波形或每块 4000 点的原始数据。
+
+1. 用网线直连树莓派与工控机，按上面的推荐地址设置两端有线网卡。
+2. 在树莓派“通讯”页面启用“工控机 TCP 服务”，端口保持 `5000`，点击“应用通讯设置”。
+3. 在 Windows PowerShell 中运行 `ping 192.168.50.2`，再运行 `Test-NetConnection 192.168.50.2 -Port 5000`。
+4. 将工控机软件配置为 TCP Client，并使用以下连接参数：
+
+```text
+Host: 192.168.50.2
+Port: 5000
+```
+
+CPC TCP Protocol V1.0 使用 ASCII 文本和 CRLF 分帧，每产生一个新的约 1 秒颗粒统计结果发送一帧：
+
+```text
+$CPC,<Version>,<Sequence>,<Concentration>,<Status>\r\n
+```
+
+示例：
+
+```text
+$CPC,1,125,104.628,0\r\n
+```
+
+字段含义：
+
+- `$CPC`：固定帧头。
+- `Version`：协议版本，当前固定为 `1`。
+- `Sequence`：`quint32` 发送序号，由 `CpcTcpServer` 独立维护，每生成一次新的颗粒结果递增。
+- `Concentration`：与主界面和 8080 看板共用的最终颗粒显示值，固定 3 位小数；无效数据输出 `0.000`。
+- `Status`：`0` 表示数据正常，`2` 表示颗粒结果无效。预留状态包括 `1` 未开始采集、`3` OPC 采集异常、`4` CPC 未就绪、`5` 系统异常。
+
+TCP 是字节流，不保证一次 `write()` 对应工控机一次 `recv()`。客户端可能分两次收到一帧，也可能一次收到多帧。因此工控机软件必须把 `recv()` 到的数据追加到接收缓存，查找 `\r\n`，提取完整帧后再解析。
+
+仓库提供的 Python 3 测试客户端可代替工控机软件验证连接：
+
+```powershell
+python tools/test_tcp_client.py --host 192.168.50.2 --port 5000
+```
+
+### 同时使用网页看板和工控机
+
+一台 Windows 电脑可以同时打开网页看板并运行工控机客户端，两者分别连接 `8080` 和 `5000`。如果网页看板和工控机是两台独立的 Windows 设备，应使用交换机接入同一局域网，并给每台设备分配不同的同网段地址，例如：
+
+```text
+树莓派：       192.168.50.2/24
+网页看板电脑： 192.168.50.1/24
+Windows 工控机：192.168.50.3/24
+```
+
+通讯页面修改服务开关或端口后，会显示“配置尚未应用”；点击“应用通讯设置”才会重配并保存。新端口启动失败时，程序会尝试恢复上一份已应用配置。服务设置通过 `QSettings` 保存：
+
+```text
+communication/web/enabled
+communication/web/port
+communication/tcp/enabled
+communication/tcp/port
+```
+
+有线 IPv4 始终以 NetworkManager 为真实配置源，不写入 `QSettings`。网络或通讯服务异常只会在页面和日志中报告，不会加入 CPC Ready 条件，也不会阻止采集、温控或其他硬件控制。
 
 ## 建议的首次实机检查顺序
 

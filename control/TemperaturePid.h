@@ -6,6 +6,8 @@
 
 class HybridCoolingPID {
 public:
+    static constexpr double minimum_safe_dt = 0.05;
+    static constexpr double maximum_safe_dt = 2.0;
     double target = 10.0;
     double prev_temp = 25.0;
     double integral = 0.0;
@@ -28,8 +30,21 @@ public:
         integral = 0.0;
     }
 
+    void synchronizeMeasurement(double cur) {
+        if (std::isfinite(cur)) {
+            prev_temp = cur;
+            is_first_run = false;
+        } else {
+            is_first_run = true;
+        }
+    }
+
     double compute(double cur, double dt) {
-        if (!std::isfinite(cur) || !std::isfinite(dt) || dt <= 0.0) return 0.0;
+        if (!std::isfinite(cur)) return 0.0;
+        if (!std::isfinite(dt) || dt < minimum_safe_dt || dt > maximum_safe_dt) {
+            synchronizeMeasurement(cur);
+            return 0.0;
+        }
         if (is_first_run) {
             prev_temp = cur;
             is_first_run = false;
@@ -66,6 +81,8 @@ public:
 
 class PredictiveHeatingPID {
 public:
+    static constexpr double minimum_safe_dt = 0.05;
+    static constexpr double maximum_safe_dt = 2.0;
     double target = 40.0;
     double prev_temp = 25.0;
     double integral = 0.0;
@@ -96,8 +113,22 @@ public:
         integral = 0.0;
     }
 
+    void synchronizeMeasurement(double cur) {
+        filtered_rate = 0.0;
+        if (std::isfinite(cur)) {
+            prev_temp = cur;
+            is_first_run = false;
+        } else {
+            is_first_run = true;
+        }
+    }
+
     double compute(double cur, double dt) {
-        if (!std::isfinite(cur) || !std::isfinite(dt) || dt <= 0.0) return 0.0;
+        if (!std::isfinite(cur)) return 0.0;
+        if (!std::isfinite(dt) || dt < minimum_safe_dt || dt > maximum_safe_dt) {
+            synchronizeMeasurement(cur);
+            return 0.0;
+        }
         if (is_first_run) {
             prev_temp = cur;
             is_first_run = false;

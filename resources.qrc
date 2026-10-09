@@ -2,4 +2,7 @@
   <qresource prefix="/ui">
     <file>ui/dropdown_arrow.svg</file>
   </qresource>
+  <qresource prefix="/web">
+    <file alias="index.html">web/dashboard.html</file>
+  </qresource>
 </RCC>

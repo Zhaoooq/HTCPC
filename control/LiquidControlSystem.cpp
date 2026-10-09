@@ -1,4 +1,4 @@
-#include "LiquidControlSystem.h"
+#include "control/LiquidControlSystem.h"
 
 #include <QStringList>
 
@@ -10,7 +10,7 @@ LiquidControlSystem::LiquidControlSystem(int lgpio_handle, int sensor_pin, int i
 {
     // 1. 硬件引脚初始化 (采用内部下拉，适配分压直接入主板的接法)
     sensorClaimed = h >= 0 && lgGpioClaimInput(h, LG_SET_PULL_DOWN, p_sensor) >= 0;
-    
+
     // 初始化输出，默认状态为 0 (关闭)
     inletClaimed = h >= 0 && lgGpioClaimOutput(h, 0, p_inlet, 0) >= 0;
     outletClaimed = h >= 0 && lgGpioClaimOutput(h, 0, p_outlet, 0) >= 0;
@@ -25,7 +25,7 @@ LiquidControlSystem::LiquidControlSystem(int lgpio_handle, int sensor_pin, int i
     // 2. 定时器初始化
     monitorTimer = new QTimer(this);
     connect(monitorTimer, &QTimer::timeout, this, &LiquidControlSystem::checkLiquidLevel);
-    
+
     refillTimeoutTimer = new QTimer(this);
     refillTimeoutTimer->setSingleShot(true); // 单次触发
     connect(refillTimeoutTimer, &QTimer::timeout, this, &LiquidControlSystem::onRefillTimeout);
@@ -88,8 +88,8 @@ bool LiquidControlSystem::safeStop(QString *error) {
                         .arg(outletResult);
     }
 
-    isRefilling = false;
-    isDraining = false;
+    if (inletResult >= 0) isRefilling = false;
+    if (outletResult >= 0) isDraining = false;
     if (error) *error = failures.join("；");
     return failures.isEmpty();
 }
@@ -162,13 +162,13 @@ void LiquidControlSystem::startRefill() {
     emit statusMessage(QString("💧 [自动补液] 确认缺液，已打开进液阀 GPIO%1！").arg(p_inlet));
 }
 
-void LiquidControlSystem::stopRefill(const QString& reason) {
+bool LiquidControlSystem::stopRefill(const QString& reason) {
     // 无论内部状态如何都写低电平，保证停止监控和异常路径也会关阀。
     int closeResult = inletClaimed ? lgGpioWrite(h, p_inlet, 0) : -1;
     if (isRefilling) {
-        isRefilling = false;
         refillTimeoutTimer->stop();
         if (closeResult >= 0) {
+            isRefilling = false;
             emit statusMessage(QString("🛑 [停止补液] 进液阀 GPIO%1 已关闭。原因: %2")
                                    .arg(p_inlet)
                                    .arg(reason));
@@ -178,6 +178,7 @@ void LiquidControlSystem::stopRefill(const QString& reason) {
                                   .arg(closeResult));
         }
     }
+    return closeResult >= 0;
 }
 
 void LiquidControlSystem::onRefillTimeout() {
@@ -190,26 +191,69 @@ void LiquidControlSystem::onRefillTimeout() {
 
 // ---------------- 手动排液逻辑 (包含非阻塞延时) ----------------
 void LiquidControlSystem::startManualDrain() {
-    if (isRefilling) stopRefill("被手动强排中断");
-    lgGpioWrite(h, p_inlet, 0); // 互锁：排液前确保进液阀关闭
-    
-    // 1. 尝试写入排液阀，并捕获内核返回的错误码
-    int err_valve = lgGpioWrite(h, p_outlet, 1); 
-    
-    if (err_valve < 0) {
-        // 如果写入失败，立刻在界面上爆红报警，绝不静默忽略！
-        emit statusMessage(QString("❌ 严重失败：排液阀(GPIO %1)无法控制！错误码: %2").arg(p_outlet).arg(err_valve));
-        emit alertMessage(QString("警告：排液阀引脚被系统后台进程死锁 (错误码 %1)，无法打开电磁阀！\n请在终端运行 sudo killall python3 来释放引脚。").arg(err_valve));
+    if (!hardwareReady) {
+        emit alertMessage(QString("液位控制不可用：%1").arg(hardwareError));
+        return;
+    }
+    if (isRefilling && !stopRefill("被手动排液中断")) {
+        emit alertMessage(QString("严重错误：进液阀 GPIO%1 无法确认关闭，已禁止打开排液阀。")
+                              .arg(p_inlet));
+        return;
+    }
+
+    QString interlockError;
+    const bool opened = closeInletThenOpenOutlet(
+        [&](int pin, int level) { return lgGpioWrite(h, pin, level); },
+        p_inlet,
+        p_outlet,
+        &interlockError);
+    if (!opened) {
+        emit statusMessage(QString("❌ 严重失败：手动排液互锁失败：%1").arg(interlockError));
+        emit alertMessage(QString("%1\nGPIO 操作失败，可能被其他进程或服务占用。"
+                                  "\n请检查 GPIO 占用和相关后台进程。")
+                              .arg(interlockError));
         isDraining = false;
         return;
-    } else {
-        isDraining = true;
-        emit statusMessage("⚠️ [手动排液] 开始强排废液，已打开排液阀...");
     }
-    
+    isDraining = true;
+    emit statusMessage("⚠️ [手动排液] 已确认进液阀关闭，开始排液。");
 }
+
 void LiquidControlSystem::stopManualDrain() {
-    lgGpioWrite(h, p_outlet, 0);
+    const int result = outletClaimed ? lgGpioWrite(h, p_outlet, 0) : -1;
+    if (result < 0) {
+        emit statusMessage(QString("❌ 排液阀 GPIO%1 关闭失败（错误码 %2）。")
+                               .arg(p_outlet).arg(result));
+        emit alertMessage(QString("严重错误：排液阀 GPIO%1 无法确认关闭（错误码 %2）。"
+                                  "\n请立即切断阀门电源并检查 GPIO 占用。")
+                              .arg(p_outlet).arg(result));
+        return;
+    }
     isDraining = false;
-    emit statusMessage("✅ [手动排液] 排液阀已关闭。");
+    emit statusMessage("✅ [手动排液] 排液阀已确认关闭。");
+}
+
+bool LiquidControlSystem::closeInletThenOpenOutlet(
+    const std::function<int(int, int)>& writePin,
+    int inletPin,
+    int outletPin,
+    QString *error) {
+    const int inletResult = writePin(inletPin, 0);
+    if (inletResult < 0) {
+        if (error) {
+            *error = QString("进液阀 GPIO%1 关闭失败（错误码 %2），排液阀未打开")
+                         .arg(inletPin).arg(inletResult);
+        }
+        return false;
+    }
+    const int outletResult = writePin(outletPin, 1);
+    if (outletResult < 0) {
+        if (error) {
+            *error = QString("排液阀 GPIO%1 打开失败（错误码 %2）")
+                         .arg(outletPin).arg(outletResult);
+        }
+        return false;
+    }
+    if (error) error->clear();
+    return true;
 }
